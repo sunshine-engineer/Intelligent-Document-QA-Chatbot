@@ -1,0 +1,35 @@
+/* Rounded cards */
+div[data-testid="stMetric"] {
+    border-radius: 14px;
+    border: 1px solid #30363d;
+    padding: 12px;
+    background-color: #161B22;
+}
+
+/* Chat bubbles */
+div[data-testid="stChatMessage"] {
+    border-radius: 12px;
+    border: 1px solid #2d333b;
+}
+
+/* Buttons */
+.stButton>button {
+    border-radius: 10px;
+    font-weight: 600;
+    height: 44px;
+}
+
+/* Sidebar */
+section[data-testid="stSidebar"] {
+    border-right: 1px solid #30363d;
+}
+
+/* Code blocks */
+pre {
+    border-radius: 12px !important;
+}
+
+/* Expander */
+details {
+    border-radius: 12px;
+}
