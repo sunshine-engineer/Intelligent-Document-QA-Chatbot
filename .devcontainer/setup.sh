@@ -33,7 +33,14 @@ git config --local core.autocrlf false
 git config --local core.fileMode false
 
 log "Creating the uv environment"
-uv venv "${PROJECT_ROOT}/.venv"
+if [[ -x "${PROJECT_ROOT}/.venv/bin/python" ]]; then
+    printf 'Reusing existing uv environment at %s\n' "${PROJECT_ROOT}/.venv"
+elif [[ -e "${PROJECT_ROOT}/.venv" ]]; then
+    printf 'Replacing incomplete uv environment at %s\n' "${PROJECT_ROOT}/.venv"
+    uv venv --clear "${PROJECT_ROOT}/.venv"
+else
+    uv venv "${PROJECT_ROOT}/.venv"
+fi
 
 log "Installing Python dependencies"
 uv pip install --python "${PROJECT_ROOT}/.venv/bin/python" -r requirements.txt
