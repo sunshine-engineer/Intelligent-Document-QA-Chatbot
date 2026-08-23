@@ -7,8 +7,8 @@ __pycache__/
 *.so
 
 # FAISS
-.faiss 
-.pkl 
+.faiss
+.pkl
 faiss_index/
 vector_store/index_metadata.json
 
@@ -222,4 +222,3 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-
