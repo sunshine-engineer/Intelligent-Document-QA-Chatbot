@@ -44,6 +44,7 @@ load_dotenv()
 
 OLLAMA_HOST = os.getenv("OLLAMA_HOST")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
 
 # ==========================================================
 # Constants
@@ -58,7 +59,7 @@ FAISS_INDEX_PATH = "faiss_index"
 
 llm = ChatGroq(
     groq_api_key=GROQ_API_KEY,
-    model="llama-3.1-8b-instant",
+    model=LLM_MODEL,
 )
 
 # ==========================================================
@@ -208,7 +209,7 @@ with st.sidebar:
     st.subheader("System")
 
     st.write(f"**LLM**")
-    st.caption("llama-3.1-8b-instant")
+    st.caption(LLM_MODEL)
 
     st.write("**Embeddings**")
     st.caption("nomic-embed-text")

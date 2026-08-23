@@ -8,22 +8,22 @@ services:
     restart: unless-stopped
 
     ports:
-      - "${OLLAMA_PORT}:11434"
+      - "${OLLAMA_PORT:-11434}:11434"
 
     volumes:
       - ollama-data:/root/.ollama
 
     environment:
-      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-10s}
 
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities:
-                - gpu
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities:
+    #             - gpu
 
     healthcheck:
       test: ["CMD", "ollama", "list"]
@@ -37,16 +37,30 @@ services:
         max-size: "20m"
         max-file: "5"
 
+  ollama-init:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull nomic-embed-text:latest"]
+    restart: "no"
 
   rag_chatbot:
-    build: .
+    build:
+      context: .
+      dockerfile: .devcontainer/Dockerfile
     container_name: rag_chatbot
     restart: unless-stopped
     depends_on:
       ollama:
         condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
       postgres:
-       condition: service_healthy
+        condition: service_healthy
     ports:
       - "8501:8501"
     env_file:
@@ -55,37 +69,29 @@ services:
       OLLAMA_HOST: http://ollama:11434
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: chatbot 
+      DB_NAME: chatbot
       DB_USER: chatbot
-      DB_PASSWORD: chatbot 
+      DB_PASSWORD: chatbot
     volumes:
-      - ./research_papers:/app/research_papers
-      - ./vector_store:/app/vector_store
-      - ./.streamlit:/app/.streamlit
+      - .:/app:cached
 
   postgres:
     image: postgres:16
-
     container_name: postgres
-
     restart: unless-stopped
-
     environment:
-      POSTGRES_DB: chatbot
-      POSTGRES_USER: chatbot
-      POSTGRES_PASSWORD: chatbot
-
+      POSTGRES_DB: ${POSTGRES_DB:-chatbot}
+      POSTGRES_USER: ${POSTGRES_USER:-chatbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chatbot}
     ports:
-      - "5432:5432"
-
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-
     healthcheck:
-      test: ["CMD-SHELL","pg_isready -U chatbot"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chatbot} -d ${POSTGRES_DB:-chatbot}"]
       interval: 10s
+      timeout: 5s
       retries: 5
-
 
 volumes:
   ollama-data:
