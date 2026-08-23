@@ -6,6 +6,12 @@ __pycache__/
 # C extensions
 *.so
 
+# FAISS
+.faiss 
+.pkl 
+faiss_index/
+vector_store/index_metadata.json
+
 # Distribution / packaging
 .Python
 build/
@@ -216,3 +222,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+

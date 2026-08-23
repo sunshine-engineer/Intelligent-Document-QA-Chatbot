@@ -1,0 +1,28 @@
+{
+    "name": "local-rag-assistant",
+    "dockerComposeFile": "../docker-compose_base.yml",
+    "service": "rag_chatbot",
+    "workspaceFolder": "/app",
+    "shutdownAction": "stopCompose",
+    "initializeCommand": "bash -c 'if [ ! -f .env ]; then cp .env.sample .env; echo Created .env from .env.sample; fi'",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylance"
+            ],
+            "settings": {
+                "python.analysis.typeCheckingMode": "basic",
+                "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
+                "python.terminal.activateEnvironment": true,
+                "editor.formatOnSave": true,
+                "editor.codeActionsOnSave": {
+                    "source.fixAll": "explicit"
+                }
+            }
+        }
+    },
+    "remoteUser": "root",
+    "postCreateCommand": "bash .devcontainer/setup.sh",
+    "postStartCommand": "printf '\\nContainer ready. Streamlit: http://localhost:8501\\n'"
+}
