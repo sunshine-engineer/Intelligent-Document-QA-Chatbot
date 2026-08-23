@@ -5,23 +5,33 @@ import hashlib
 METADATA_FILE = "vector_store/index_metadata.json"
 
 
+def get_pdf_files(pdf_directory):
+
+    if not os.path.isdir(pdf_directory):
+        return []
+
+    return [
+        filename
+        for filename in sorted(os.listdir(pdf_directory))
+        if filename.lower().endswith(".pdf")
+    ]
+
+
 def get_pdf_state(pdf_directory):
 
     pdfs = []
 
-    for filename in sorted(os.listdir(pdf_directory)):
+    for filename in get_pdf_files(pdf_directory):
 
-        if filename.endswith(".pdf"):
+        path = os.path.join(pdf_directory, filename)
 
-            path = os.path.join(pdf_directory, filename)
+        stat = os.stat(path)
 
-            stat = os.stat(path)
-
-            pdfs.append({
-                "file": filename,
-                "size": stat.st_size,
-                "mtime": stat.st_mtime,
-            })
+        pdfs.append({
+            "file": filename,
+            "size": stat.st_size,
+            "mtime": stat.st_mtime,
+        })
 
     text = json.dumps(pdfs, sort_keys=True)
 
