@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir "uv==0.12.5"
 # Dev Container setup also creates /app/.venv after the repository is mounted.
 COPY pyproject.toml uv.lock /tmp/
 RUN cd /tmp \
-    && uv sync --frozen --no-dev \
+    && UV_PROJECT_ENVIRONMENT=/tmp/.venv uv sync --frozen --no-dev \
     && cp -a /tmp/.venv /opt/venv \
     && rm -rf /tmp/.venv /tmp/pyproject.toml /tmp/uv.lock
 
