@@ -30,6 +30,7 @@ from langchain_classic.chains import create_retrieval_chain
 from langchain_ollama import OllamaEmbeddings
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from app_services import IndexConfig, IndexService
 
 # ==========================================================
 # Page Configuration
@@ -90,6 +91,18 @@ llm = (
 
 
 def load_vector_store(show_error=True):
+
+    try:
+        vectors, metrics = index_service.load()
+        st.session_state.vectors = vectors
+        st.session_state.index_metrics = metrics
+        return True
+    except Exception:
+        if show_error:
+            st.error("Saved FAISS index could not be loaded. Rebuild the index.")
+        st.session_state.vectors = None
+        st.session_state.index_metrics = None
+        return False
 
     if not verify_index_manifest(
         FAISS_INDEX_PATH,
@@ -159,7 +172,37 @@ def get_embedding_model():
 # Build Embeddings
 # ==========================================================
 
+index_service = IndexService(
+    IndexConfig(
+        pdf_directory=PDF_DIRECTORY,
+        index_directory=FAISS_INDEX_PATH,
+        embedding_provider=EMBEDDING_PROVIDER,
+        embedding_model=EMBEDDING_MODEL,
+    ),
+    embedding_factory=get_embedding_model,
+    loader_factory=PyPDFDirectoryLoader,
+    splitter_factory=lambda: RecursiveCharacterTextSplitter(
+        chunk_size=1000,
+        chunk_overlap=200,
+    ),
+    faiss_loader=FAISS.load_local,
+)
+
 def create_vector_embedding(document_changes=None):
+
+    try:
+        vectors, metrics, docs, final_documents = index_service.build(
+            document_changes,
+            st.session_state.vectors,
+        )
+        st.session_state.docs = docs
+        st.session_state.final_documents = final_documents
+        st.session_state.vectors = vectors
+        st.session_state.index_metrics = metrics
+        st.session_state.startup_message = None
+        return True
+    except Exception:
+        raise
 
     embeddings = get_embedding_model()
 
