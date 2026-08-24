@@ -4,7 +4,16 @@ from json import JSONDecodeError
 
 import streamlit as st
 from dotenv import load_dotenv
-from index_metadata import get_pdf_files, get_pdf_state, load_metadata, save_metadata
+from index_metadata import (
+    build_index_manifest,
+    get_pdf_files,
+    get_pdf_state,
+    load_index_manifest,
+    load_metadata,
+    save_index_manifest,
+    save_metadata,
+    verify_index_manifest,
+)
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
@@ -53,6 +62,8 @@ LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
 
 PDF_DIRECTORY = "research_papers"
 FAISS_INDEX_PATH = "faiss_index"
+EMBEDDING_PROVIDER = "ollama"
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text:latest")
 
 # ==========================================================
 # LLM
@@ -74,6 +85,15 @@ llm = (
 
 def load_vector_store(show_error=True):
 
+    if not verify_index_manifest(
+        FAISS_INDEX_PATH,
+        EMBEDDING_PROVIDER,
+        EMBEDDING_MODEL,
+    ):
+        if show_error:
+            st.error("Saved FAISS index verification failed. Rebuild the index.")
+        return False
+
     embeddings = get_embedding_model()
 
     if not os.path.exists(FAISS_INDEX_PATH):
@@ -87,12 +107,21 @@ def load_vector_store(show_error=True):
             allow_dangerous_deserialization=True,
         )
 
+        manifest = load_index_manifest()
+        if manifest and manifest.get("vector_dimension") != getattr(
+            st.session_state.vectors.index, "d", None
+        ):
+            st.session_state.vectors = None
+            if show_error:
+                st.error("Saved FAISS index dimension verification failed.")
+            return False
+
         return True
 
-    except Exception as e:
+    except Exception:
 
         if show_error:
-            st.error(f"Failed loading FAISS index\n\n{e}")
+            st.error("Saved FAISS index could not be loaded. Rebuild the index.")
 
     return False
 
@@ -142,6 +171,14 @@ def create_vector_embedding():
     )
 
     vectors.save_local(FAISS_INDEX_PATH)
+    save_index_manifest(
+        build_index_manifest(
+            FAISS_INDEX_PATH,
+            EMBEDDING_PROVIDER,
+            EMBEDDING_MODEL,
+            getattr(vectors.index, "d", None),
+        )
+    )
     save_metadata(
         get_pdf_state(PDF_DIRECTORY)
     )
