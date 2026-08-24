@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
-    PATH=/app/.venv/bin:/opt/venv/bin:/root/.local/bin:$PATH
+    PATH=/opt/venv/bin:/app/.venv/bin:/root/.local/bin:$PATH
 
 WORKDIR /app
 
@@ -31,4 +31,4 @@ COPY . /app
 
 EXPOSE 8501
 
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+CMD ["sleep", "infinity"]

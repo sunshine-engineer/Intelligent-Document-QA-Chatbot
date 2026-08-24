@@ -54,6 +54,7 @@ services:
       dockerfile: .devcontainer/Dockerfile
     container_name: rag_chatbot
     restart: unless-stopped
+    command: ["sleep", "infinity"]
     depends_on:
       ollama:
         condition: service_healthy
