@@ -31,6 +31,7 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app_services import IndexConfig, IndexService
+from query_services import ConversationalQueryService
 
 # ==========================================================
 # Page Configuration
@@ -543,6 +544,42 @@ Instructions:
 """
 )
 
+
+def build_query_service(top_k):
+    retriever = st.session_state.vectors.as_retriever(
+        search_kwargs={"k": top_k}
+    )
+
+    def retrieve(query):
+        return retriever.vectorstore.similarity_search_with_relevance_scores(
+            query, k=top_k
+        )
+
+    def rewrite(history, question):
+        rewrite_prompt = ChatPromptTemplate.from_template(
+            "Rewrite the follow-up as a standalone search query.\n"
+            "Conversation:\n{history}\nFollow-up:\n{question}"
+        )
+        return llm.invoke(rewrite_prompt.format_messages(
+            history=history, question=question
+        )).content
+
+    def answer(question, history, documents):
+        chain = create_stuff_documents_chain(llm, prompt)
+        return chain.invoke({
+            "input": question,
+            "history": history,
+            "context": documents,
+        })
+
+    return ConversationalQueryService(
+        retriever=retrieve,
+        rewriter=rewrite if llm is not None else None,
+        answerer=answer,
+        relevance_threshold=float(os.getenv("RETRIEVAL_RELEVANCE_THRESHOLD", "0.35")),
+        max_results=top_k,
+    )
+
 # ==========================================================
 # Main UI
 # ==========================================================
@@ -658,20 +695,6 @@ else:
         # Build RAG
         # ----------------------------
 
-        retriever = st.session_state.vectors.as_retriever(
-            search_kwargs={"k": top_k}
-        )
-
-        document_chain = create_stuff_documents_chain(
-            llm,
-            prompt,
-        )
-
-        retrieval_chain = create_retrieval_chain(
-            retriever,
-            document_chain,
-        )
-
         history = build_chat_history()
 
         with st.chat_message("assistant",
@@ -681,22 +704,19 @@ else:
 
                 start = time.perf_counter()
                 try:
-                    response = retrieval_chain.invoke(
-                        {
-                            "input": user_prompt,
-                            "history": history,
-                        }
+                    query_result = build_query_service(top_k).ask(
+                        user_prompt, history
                     )
                 except Exception as e:
                     st.error(f"Error while generating response:\n\n{e}")
                     st.stop()
                     
                 
-                st.session_state.last_sources = response["context"]
+                st.session_state.last_citations = query_result.citations
 
                 elapsed = time.perf_counter() - start
 
-            answer = response["answer"]
+            answer = query_result.answer
 
             # ----------------------------
             # Streaming animation
@@ -741,13 +761,13 @@ else:
         # Sources
         # ----------------------------
         
-        if "last_sources" in st.session_state:
+        if "last_citations" in st.session_state:
             with st.expander(
-                f"📚 Retrieved Sources ({len(response['context'])})",
+                f"📚 Retrieved Sources ({len(query_result.citations)})",
                 expanded=False,
             ):
             
-                for i, doc in enumerate(response["context"], start=1):
+                for i, citation in enumerate(query_result.citations, start=1):
             
                     st.markdown(f"### 📄 Source {i}")
             
@@ -755,16 +775,19 @@ else:
             
                     with col1:
                         st.write(
-                            f"**File:** {os.path.basename(doc.metadata.get('source','Unknown'))}"
+                            f"**File:** {os.path.basename(citation.document)}"
                         )
             
                     with col2:
-                        if "page" in doc.metadata:
-                            st.write(f"**Page:** {doc.metadata['page']+1}")
+                        if citation.page is not None:
+                            st.write(f"**Page:** {citation.page}")
             
                     st.code(
-                        doc.page_content,
+                        citation.excerpt,
                         language=None,
+                    )
+                    st.caption(
+                        f"Chunk: {citation.chunk_id} · Score: {citation.retrieval_score:.3f}"
                     )
             
                     st.divider()
