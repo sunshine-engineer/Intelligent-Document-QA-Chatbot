@@ -219,6 +219,17 @@ def save_faiss_index_atomically(vectors, index_directory):
             shutil.rmtree(temporary_path)
 
 
+def discard_persisted_index(index_directory):
+
+    index_path = Path(index_directory)
+    if index_path.exists():
+        shutil.rmtree(index_path)
+
+    manifest_path = Path(INDEX_MANIFEST_FILE)
+    if manifest_path.exists():
+        manifest_path.unlink()
+
+
 def metadata_exists():
 
     return os.path.exists(METADATA_FILE)

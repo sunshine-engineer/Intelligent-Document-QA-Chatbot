@@ -129,6 +129,23 @@ class IndexManifestTests(unittest.TestCase):
             self.assertEqual((index_directory / "index.faiss").read_bytes(), b"old")
             self.assertEqual((index_directory / "index.pkl").read_bytes(), b"old")
 
+    def test_discard_persisted_index_removes_generated_artifacts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            index_directory = Path(directory) / "faiss_index"
+            index_directory.mkdir()
+            (index_directory / "index.faiss").write_bytes(b"index")
+            manifest_path = Path(directory) / "index_manifest.json"
+            manifest_path.write_text("{}", encoding="utf-8")
+
+            original_manifest_path = index_metadata.INDEX_MANIFEST_FILE
+            index_metadata.INDEX_MANIFEST_FILE = str(manifest_path)
+            try:
+                index_metadata.discard_persisted_index(index_directory)
+                self.assertFalse(index_directory.exists())
+                self.assertFalse(manifest_path.exists())
+            finally:
+                index_metadata.INDEX_MANIFEST_FILE = original_manifest_path
+
 
 if __name__ == "__main__":
     unittest.main()

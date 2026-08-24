@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from index_metadata import (
     build_index_manifest,
     compare_document_manifests,
+    discard_persisted_index,
     get_pdf_files,
     get_document_manifest,
     get_pdf_state,
@@ -275,6 +276,12 @@ needs_rebuild = needs_rebuild or any(
 
 if not pdf_files:
     st.session_state.vectors = None
+    if (
+        isinstance(saved, dict)
+        and saved.get("document_manifest", {}).get("documents")
+    ):
+        discard_persisted_index(FAISS_INDEX_PATH)
+        save_metadata(current_state, current_document_manifest)
     st.session_state.startup_message = (
         "Add at least one PDF to research_papers/ to build the knowledge base."
     )
