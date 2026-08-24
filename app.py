@@ -6,11 +6,13 @@ import streamlit as st
 from dotenv import load_dotenv
 from index_metadata import (
     build_index_manifest,
+    build_index_metrics,
     compare_document_manifests,
     discard_persisted_index,
     get_pdf_files,
     get_document_manifest,
     get_pdf_state,
+    is_valid_index_metrics,
     load_index_manifest,
     load_metadata,
     save_faiss_index_atomically,
@@ -120,6 +122,15 @@ def load_vector_store(show_error=True):
                 st.error("Saved FAISS index dimension verification failed.")
             return False
 
+        metadata = load_metadata()
+        metrics = metadata.get("metrics") if isinstance(metadata, dict) else None
+        if not is_valid_index_metrics(metrics):
+            if show_error:
+                st.error("Saved index metrics are unavailable. Rebuild the index.")
+            st.session_state.index_metrics = None
+            return False
+        st.session_state.index_metrics = metrics
+
         return True
 
     except Exception:
@@ -207,6 +218,7 @@ def create_vector_embedding(document_changes=None):
     document_manifest = get_document_manifest(PDF_DIRECTORY)
     for document in document_manifest["documents"].values():
         document["status"] = "indexed"
+    metrics = build_index_metrics(vectors, document_manifest)
     save_index_manifest(
         build_index_manifest(
             FAISS_INDEX_PATH,
@@ -218,6 +230,7 @@ def create_vector_embedding(document_changes=None):
     save_metadata(
         get_pdf_state(PDF_DIRECTORY),
         document_manifest,
+        metrics,
     )
 
     st.session_state.docs = docs
@@ -241,6 +254,7 @@ def initialize_session_state():
         "vectors": None,
         "embeddings": None,
         "startup_message": None,
+        "index_metrics": None,
     }
 
     for key, value in defaults.items():
@@ -281,7 +295,15 @@ if not pdf_files:
         and saved.get("document_manifest", {}).get("documents")
     ):
         discard_persisted_index(FAISS_INDEX_PATH)
-        save_metadata(current_state, current_document_manifest)
+        empty_metrics = {
+            "schema_version": 1,
+            "document_count": 0,
+            "chunk_count": 0,
+            "per_document_chunk_counts": {},
+            "indexed_at": None,
+        }
+        st.session_state.index_metrics = empty_metrics
+        save_metadata(current_state, current_document_manifest, empty_metrics)
     st.session_state.startup_message = (
         "Add at least one PDF to research_papers/ to build the knowledge base."
     )
@@ -365,13 +387,26 @@ with st.sidebar:
 
     st.metric(
         "Documents",
-        len(st.session_state.docs),
+        (
+            st.session_state.index_metrics.get("document_count", "Unavailable")
+            if st.session_state.index_metrics
+            else "Unavailable"
+        ),
     )
 
     st.metric(
         "Chunks",
-        len(st.session_state.final_documents),
+        (
+            st.session_state.index_metrics.get("chunk_count", "Unavailable")
+            if st.session_state.index_metrics
+            else "Unavailable"
+        ),
     )
+
+    if st.session_state.index_metrics:
+        st.caption(
+            f"Last indexed: {st.session_state.index_metrics.get('indexed_at', 'Unavailable')}"
+        )
 
     st.divider()
 
@@ -523,13 +558,13 @@ else:
     with col1:
         st.metric(
             "Documents",
-            len(st.session_state.docs)
+            st.session_state.index_metrics.get("document_count", "Unavailable")
         )
     
     with col2:
         st.metric(
             "Chunks",
-            len(st.session_state.final_documents)
+            st.session_state.index_metrics.get("chunk_count", "Unavailable")
         )
     
     with col3:

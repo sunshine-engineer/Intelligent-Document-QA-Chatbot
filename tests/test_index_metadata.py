@@ -4,11 +4,33 @@ import os
 from pathlib import Path
 
 from index_metadata import (
+    build_index_metrics,
     compare_document_manifests,
     get_document_manifest,
     get_pdf_files,
     get_pdf_state,
 )
+
+
+class FakeDocstore:
+    def __init__(self, documents):
+        self.documents = documents
+
+    def search(self, document_id):
+        return self.documents.get(document_id)
+
+
+class FakeVectors:
+    index_to_docstore_id = {"0": "chunk-a", "1": "chunk-a-2", "2": "chunk-b"}
+    docstore = FakeDocstore(
+        {
+            "chunk-a": type("Document", (), {"metadata": {"source": "a.pdf"}})(),
+            "chunk-a-2": type(
+                "Document", (), {"metadata": {"source": "a.pdf"}}
+            )(),
+            "chunk-b": type("Document", (), {"metadata": {"source": "b.pdf"}})(),
+        }
+    )
 
 
 class PdfStateTests(unittest.TestCase):
@@ -73,6 +95,19 @@ class PdfStateTests(unittest.TestCase):
                     "removed": ["b.pdf"],
                 },
             )
+
+    def test_metrics_persist_document_and_chunk_counts(self):
+        metrics = build_index_metrics(
+            FakeVectors(),
+            {"documents": {"a.pdf": {}, "b.pdf": {}}},
+        )
+
+        self.assertEqual(metrics["document_count"], 2)
+        self.assertEqual(metrics["chunk_count"], 3)
+        self.assertEqual(
+            metrics["per_document_chunk_counts"],
+            {"a.pdf": 2, "b.pdf": 1},
+        )
 
 
 if __name__ == "__main__":

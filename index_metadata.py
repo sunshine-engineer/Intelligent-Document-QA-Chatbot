@@ -11,6 +11,7 @@ INDEX_MANIFEST_FILE = "vector_store/index_manifest.json"
 INDEX_SCHEMA_VERSION = 1
 INDEX_ARTIFACTS = ("index.faiss", "index.pkl")
 DOCUMENT_MANIFEST_SCHEMA_VERSION = 1
+METRICS_SCHEMA_VERSION = 1
 
 
 def get_pdf_files(pdf_directory):
@@ -74,6 +75,46 @@ def compare_document_manifests(previous, current):
         "unchanged": unchanged,
         "removed": removed,
     }
+
+
+def build_index_metrics(vectors, document_manifest):
+
+    per_document_chunk_counts = {}
+    index_to_docstore_id = getattr(vectors, "index_to_docstore_id", {})
+
+    for document_id in index_to_docstore_id.values():
+        document = vectors.docstore.search(document_id)
+        source = document.metadata.get("source", "") if document else ""
+        source_name = os.path.basename(source).replace(os.sep, "/")
+        per_document_chunk_counts[source_name] = (
+            per_document_chunk_counts.get(source_name, 0) + 1
+        )
+
+    documents = (
+        document_manifest.get("documents", {})
+        if isinstance(document_manifest, dict)
+        else {}
+    )
+
+    return {
+        "schema_version": METRICS_SCHEMA_VERSION,
+        "document_count": len(documents),
+        "chunk_count": len(index_to_docstore_id),
+        "per_document_chunk_counts": per_document_chunk_counts,
+        "indexed_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def is_valid_index_metrics(metrics):
+
+    return (
+        isinstance(metrics, dict)
+        and metrics.get("schema_version") == METRICS_SCHEMA_VERSION
+        and isinstance(metrics.get("document_count"), int)
+        and isinstance(metrics.get("chunk_count"), int)
+        and isinstance(metrics.get("per_document_chunk_counts"), dict)
+        and isinstance(metrics.get("indexed_at"), str)
+    )
 
 
 def get_pdf_state(pdf_directory):
@@ -244,7 +285,7 @@ def load_metadata():
         return json.load(f)
 
 
-def save_metadata(state, document_manifest=None):
+def save_metadata(state, document_manifest=None, metrics=None):
 
     metadata_path = Path(METADATA_FILE)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
@@ -253,6 +294,8 @@ def save_metadata(state, document_manifest=None):
 
     if document_manifest is not None:
         payload["document_manifest"] = document_manifest
+    if metrics is not None:
+        payload["metrics"] = metrics
 
     with open(temporary_path, "w", encoding="utf-8") as file_handle:
         json.dump(payload, file_handle, indent=2)
