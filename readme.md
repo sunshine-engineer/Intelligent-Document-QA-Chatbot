@@ -74,6 +74,18 @@ On startup:
 4. If changed → rebuild embeddings
 5. Save updated metadata
 
+## Persisted index trust boundary
+
+The local FAISS store contains a pickle-backed document mapping because of the
+current LangChain FAISS persistence format. The application does not load that
+mapping until a separate manifest verifies the expected schema, embedding
+provider, embedding model, artifact sizes, and SHA-256 checksums. Index files
+that are missing, modified, incompatible, or created without a manifest are
+rejected and rebuilt instead of being treated as a valid knowledge base.
+
+The index directory is application-generated state. Do not replace its files
+with artifacts from an untrusted source.
+
 ---
 
 # Tech Stack

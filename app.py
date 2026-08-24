@@ -1,10 +1,19 @@
 import os
 import time
+from json import JSONDecodeError
 
 import streamlit as st
 from dotenv import load_dotenv
-from index_metadata import save_metadata, get_pdf_state
-from index_metadata import load_metadata
+from index_metadata import (
+    build_index_manifest,
+    get_pdf_files,
+    get_pdf_state,
+    load_index_manifest,
+    load_metadata,
+    save_index_manifest,
+    save_metadata,
+    verify_index_manifest,
+)
 from langchain_community.vectorstores import FAISS
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
@@ -20,6 +29,14 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 # Page Configuration
 # ==========================================================
 
+st.set_page_config(
+    page_title="Local RAG Assistant",
+    page_icon="🤖",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
 def load_css():
     with open(".streamlit/style.css") as f:
         st.markdown(
@@ -29,20 +46,13 @@ def load_css():
 
 load_css()
 
-st.set_page_config(
-    page_title="Local RAG Assistant",
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
 # ==========================================================
 # Load Environment Variables
 # ==========================================================
 
 load_dotenv()
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST")
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
 
@@ -52,14 +62,20 @@ LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
 
 PDF_DIRECTORY = "research_papers"
 FAISS_INDEX_PATH = "faiss_index"
+EMBEDDING_PROVIDER = "ollama"
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text:latest")
 
 # ==========================================================
 # LLM
 # ==========================================================
 
-llm = ChatGroq(
-    groq_api_key=GROQ_API_KEY,
-    model=LLM_MODEL,
+llm = (
+    ChatGroq(
+        groq_api_key=GROQ_API_KEY,
+        model=LLM_MODEL,
+    )
+    if GROQ_API_KEY
+    else None
 )
 
 # ==========================================================
@@ -67,25 +83,45 @@ llm = ChatGroq(
 # ==========================================================
 
 
-def load_vector_store():
+def load_vector_store(show_error=True):
+
+    if not verify_index_manifest(
+        FAISS_INDEX_PATH,
+        EMBEDDING_PROVIDER,
+        EMBEDDING_MODEL,
+    ):
+        if show_error:
+            st.error("Saved FAISS index verification failed. Rebuild the index.")
+        return False
 
     embeddings = get_embedding_model()
 
-    if os.path.exists(FAISS_INDEX_PATH):
+    if not os.path.exists(FAISS_INDEX_PATH):
+        return False
 
-        try:
+    try:
 
-            st.session_state.vectors = FAISS.load_local(
-                FAISS_INDEX_PATH,
-                embeddings,
-                allow_dangerous_deserialization=True,
-            )
+        st.session_state.vectors = FAISS.load_local(
+            FAISS_INDEX_PATH,
+            embeddings,
+            allow_dangerous_deserialization=True,
+        )
 
-            return True
+        manifest = load_index_manifest()
+        if manifest and manifest.get("vector_dimension") != getattr(
+            st.session_state.vectors.index, "d", None
+        ):
+            st.session_state.vectors = None
+            if show_error:
+                st.error("Saved FAISS index dimension verification failed.")
+            return False
 
-        except Exception as e:
+        return True
 
-            st.error(f"Failed loading FAISS index\n\n{e}")
+    except Exception:
+
+        if show_error:
+            st.error("Saved FAISS index could not be loaded. Rebuild the index.")
 
     return False
 
@@ -116,6 +152,12 @@ def create_vector_embedding():
 
     docs = loader.load()
 
+    if not docs:
+        st.session_state.docs = []
+        st.session_state.final_documents = []
+        st.session_state.vectors = None
+        return False
+
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
         chunk_overlap=200,
@@ -129,6 +171,14 @@ def create_vector_embedding():
     )
 
     vectors.save_local(FAISS_INDEX_PATH)
+    save_index_manifest(
+        build_index_manifest(
+            FAISS_INDEX_PATH,
+            EMBEDDING_PROVIDER,
+            EMBEDDING_MODEL,
+            getattr(vectors.index, "d", None),
+        )
+    )
     save_metadata(
         get_pdf_state(PDF_DIRECTORY)
     )
@@ -136,6 +186,8 @@ def create_vector_embedding():
     st.session_state.docs = docs
     st.session_state.final_documents = final_documents
     st.session_state.vectors = vectors
+    st.session_state.startup_message = None
+    return True
 
 
 # ==========================================================
@@ -151,6 +203,7 @@ def initialize_session_state():
         "final_documents": [],
         "vectors": None,
         "embeddings": None,
+        "startup_message": None,
     }
 
     for key, value in defaults.items():
@@ -162,21 +215,47 @@ def initialize_session_state():
 initialize_session_state()
 
 current_state = get_pdf_state(PDF_DIRECTORY)
+pdf_files = get_pdf_files(PDF_DIRECTORY)
 
-saved = load_metadata()
+try:
+    saved = load_metadata()
+except (OSError, JSONDecodeError):
+    saved = None
 
 needs_rebuild = (
-    saved is None
-    or saved["pdf_state"] != current_state
+    not isinstance(saved, dict)
+    or saved.get("pdf_state") != current_state
+    or not os.path.exists(FAISS_INDEX_PATH)
 )
 
-if needs_rebuild:
+if not pdf_files:
+    st.session_state.vectors = None
+    st.session_state.startup_message = (
+        "Add at least one PDF to research_papers/ to build the knowledge base."
+    )
+elif needs_rebuild:
 
     with st.spinner("Indexing research papers..."):
 
-        create_vector_embedding()
+        try:
+            create_vector_embedding()
+        except Exception:
+            st.session_state.vectors = None
+            st.session_state.startup_message = (
+                "Knowledge-base indexing failed. Check the PDF files and "
+                "embedding service, then use Refresh Knowledge Base."
+            )
 else:
-    load_vector_store()
+    if not load_vector_store(show_error=False):
+        with st.spinner("Recovering the knowledge base..."):
+            try:
+                create_vector_embedding()
+            except Exception:
+                st.session_state.vectors = None
+                st.session_state.startup_message = (
+                    "The saved index could not be loaded or rebuilt. "
+                    "Use Refresh Knowledge Base after checking the services."
+                )
 
 
 # ==========================================================
@@ -207,6 +286,9 @@ with st.sidebar:
         st.rerun()
 
     st.subheader("System")
+
+    if llm is None:
+        st.warning("GROQ_API_KEY is not configured. Answers are unavailable.")
 
     st.write(f"**LLM**")
     st.caption(LLM_MODEL)
@@ -347,6 +429,9 @@ st.divider()
 
 if st.session_state.vectors is None:
 
+    if st.session_state.startup_message:
+        st.warning(st.session_state.startup_message)
+
     st.info(
         """
 ### 👋 Welcome!
@@ -416,6 +501,10 @@ else:
     )
 
     if user_prompt:
+
+        if llm is None:
+            st.error("Configure GROQ_API_KEY before asking a question.")
+            st.stop()
 
         # ----------------------------
         # Save user message
