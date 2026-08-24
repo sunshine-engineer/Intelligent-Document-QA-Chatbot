@@ -1,6 +1,8 @@
 import os
 import json
 import hashlib
+import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -8,6 +10,7 @@ METADATA_FILE = "vector_store/index_metadata.json"
 INDEX_MANIFEST_FILE = "vector_store/index_manifest.json"
 INDEX_SCHEMA_VERSION = 1
 INDEX_ARTIFACTS = ("index.faiss", "index.pkl")
+DOCUMENT_MANIFEST_SCHEMA_VERSION = 1
 
 
 def get_pdf_files(pdf_directory):
@@ -22,25 +25,62 @@ def get_pdf_files(pdf_directory):
     ]
 
 
-def get_pdf_state(pdf_directory):
+def get_document_manifest(pdf_directory):
 
-    pdfs = []
+    manifest = {}
 
     for filename in get_pdf_files(pdf_directory):
+        path = Path(pdf_directory) / filename
+        normalized_path = filename.replace(os.sep, "/")
+        manifest[normalized_path] = {
+            "path": normalized_path,
+            "sha256": _sha256_file(path),
+            "size": path.stat().st_size,
+            "status": "discovered",
+        }
 
-        path = os.path.join(pdf_directory, filename)
+    return {
+        "schema_version": DOCUMENT_MANIFEST_SCHEMA_VERSION,
+        "documents": manifest,
+    }
 
-        stat = os.stat(path)
 
-        pdfs.append({
-            "file": filename,
-            "size": stat.st_size,
-            "mtime": stat.st_mtime,
-        })
+def compare_document_manifests(previous, current):
 
-    text = json.dumps(pdfs, sort_keys=True)
+    previous_documents = (
+        previous.get("documents", {}) if isinstance(previous, dict) else {}
+    )
+    current_documents = (
+        current.get("documents", {}) if isinstance(current, dict) else {}
+    )
 
-    return hashlib.md5(text.encode()).hexdigest()
+    added = sorted(set(current_documents) - set(previous_documents))
+    removed = sorted(set(previous_documents) - set(current_documents))
+    changed = sorted(
+        path
+        for path in set(previous_documents) & set(current_documents)
+        if previous_documents[path].get("sha256")
+        != current_documents[path].get("sha256")
+    )
+    unchanged = sorted(
+        path
+        for path in set(previous_documents) & set(current_documents)
+        if path not in changed
+    )
+
+    return {
+        "added": added,
+        "changed": changed,
+        "unchanged": unchanged,
+        "removed": removed,
+    }
+
+
+def get_pdf_state(pdf_directory):
+
+    text = json.dumps(get_document_manifest(pdf_directory), sort_keys=True)
+
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def _sha256_file(path):
@@ -147,6 +187,38 @@ def verify_index_manifest(
     return True
 
 
+def save_faiss_index_atomically(vectors, index_directory):
+
+    index_path = Path(index_directory)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = Path(
+        tempfile.mkdtemp(prefix=f".{index_path.name}.", dir=index_path.parent)
+    )
+    backup_path = index_path.with_name(f".{index_path.name}.backup")
+
+    try:
+        vectors.save_local(str(temporary_path))
+
+        if backup_path.exists():
+            shutil.rmtree(backup_path)
+        if index_path.exists():
+            os.replace(index_path, backup_path)
+
+        os.replace(temporary_path, index_path)
+
+        if backup_path.exists():
+            shutil.rmtree(backup_path)
+    except Exception:
+        if index_path.exists() and backup_path.exists():
+            shutil.rmtree(index_path)
+        if backup_path.exists() and not index_path.exists():
+            os.replace(backup_path, index_path)
+        raise
+    finally:
+        if temporary_path.exists():
+            shutil.rmtree(temporary_path)
+
+
 def metadata_exists():
 
     return os.path.exists(METADATA_FILE)
@@ -161,16 +233,18 @@ def load_metadata():
         return json.load(f)
 
 
-def save_metadata(state):
+def save_metadata(state, document_manifest=None):
 
-    os.makedirs("vector_store", exist_ok=True)
+    metadata_path = Path(METADATA_FILE)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = metadata_path.with_suffix(".tmp")
+    payload = {"pdf_state": state}
 
-    with open(METADATA_FILE, "w") as f:
+    if document_manifest is not None:
+        payload["document_manifest"] = document_manifest
 
-        json.dump(
-            {
-                "pdf_state": state
-            },
-            f,
-            indent=2,
-        )
+    with open(temporary_path, "w", encoding="utf-8") as file_handle:
+        json.dump(payload, file_handle, indent=2)
+        file_handle.write("\n")
+
+    os.replace(temporary_path, metadata_path)

@@ -6,10 +6,13 @@ import streamlit as st
 from dotenv import load_dotenv
 from index_metadata import (
     build_index_manifest,
+    compare_document_manifests,
     get_pdf_files,
+    get_document_manifest,
     get_pdf_state,
     load_index_manifest,
     load_metadata,
+    save_faiss_index_atomically,
     save_index_manifest,
     save_metadata,
     verify_index_manifest,
@@ -144,7 +147,7 @@ def get_embedding_model():
 # Build Embeddings
 # ==========================================================
 
-def create_vector_embedding():
+def create_vector_embedding(document_changes=None):
 
     embeddings = get_embedding_model()
 
@@ -163,14 +166,46 @@ def create_vector_embedding():
         chunk_overlap=200,
     )
 
-    final_documents = splitter.split_documents(docs)
+    vectors = st.session_state.vectors
+    documents_to_embed = docs
 
-    vectors = FAISS.from_documents(
-        final_documents,
-        embeddings,
-    )
+    if document_changes and vectors is not None:
+        changed_paths = set(document_changes["added"]) | set(
+            document_changes["changed"]
+        )
+        removed_paths = set(document_changes["removed"])
+        ids_to_delete = []
 
-    vectors.save_local(FAISS_INDEX_PATH)
+        for document_id in vectors.index_to_docstore_id.values():
+            document = vectors.docstore.search(document_id)
+            source = document.metadata.get("source", "") if document else ""
+            source_name = os.path.basename(source)
+            if source_name in changed_paths or source_name in removed_paths:
+                ids_to_delete.append(document_id)
+
+        if ids_to_delete:
+            vectors.delete(ids_to_delete)
+
+        documents_to_embed = [
+            document
+            for document in docs
+            if os.path.basename(document.metadata.get("source", ""))
+            in changed_paths
+        ]
+    else:
+        vectors = None
+
+    final_documents = splitter.split_documents(documents_to_embed)
+
+    if vectors is None:
+        vectors = FAISS.from_documents(final_documents, embeddings)
+    elif final_documents:
+        vectors.add_documents(final_documents)
+
+    save_faiss_index_atomically(vectors, FAISS_INDEX_PATH)
+    document_manifest = get_document_manifest(PDF_DIRECTORY)
+    for document in document_manifest["documents"].values():
+        document["status"] = "indexed"
     save_index_manifest(
         build_index_manifest(
             FAISS_INDEX_PATH,
@@ -180,7 +215,8 @@ def create_vector_embedding():
         )
     )
     save_metadata(
-        get_pdf_state(PDF_DIRECTORY)
+        get_pdf_state(PDF_DIRECTORY),
+        document_manifest,
     )
 
     st.session_state.docs = docs
@@ -216,6 +252,7 @@ initialize_session_state()
 
 current_state = get_pdf_state(PDF_DIRECTORY)
 pdf_files = get_pdf_files(PDF_DIRECTORY)
+current_document_manifest = get_document_manifest(PDF_DIRECTORY)
 
 try:
     saved = load_metadata()
@@ -225,7 +262,15 @@ except (OSError, JSONDecodeError):
 needs_rebuild = (
     not isinstance(saved, dict)
     or saved.get("pdf_state") != current_state
+    or not isinstance(saved.get("document_manifest"), dict)
     or not os.path.exists(FAISS_INDEX_PATH)
+)
+document_changes = compare_document_manifests(
+    saved.get("document_manifest") if isinstance(saved, dict) else None,
+    current_document_manifest,
+)
+needs_rebuild = needs_rebuild or any(
+    document_changes[key] for key in ("added", "changed", "removed")
 )
 
 if not pdf_files:
@@ -238,7 +283,9 @@ elif needs_rebuild:
     with st.spinner("Indexing research papers..."):
 
         try:
-            create_vector_embedding()
+            if not load_vector_store(show_error=False):
+                st.session_state.vectors = None
+            create_vector_embedding(document_changes)
         except Exception:
             st.session_state.vectors = None
             st.session_state.startup_message = (
