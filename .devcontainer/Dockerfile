@@ -17,14 +17,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Keep the environment bootstrap reproducible. The project environment itself
 # is created after the repository is bind-mounted by setup.sh.
-RUN pip install --no-cache-dir "uv==0.12.3"
+RUN pip install --no-cache-dir "uv==0.12.5"
 
 # Install the runtime dependencies into an image-local environment. The
 # Dev Container setup also creates /app/.venv after the repository is mounted.
-COPY requirements.txt /tmp/requirements.txt
-RUN uv venv /opt/venv \
-    && uv pip install --python /opt/venv/bin/python -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+COPY pyproject.toml uv.lock /tmp/
+RUN cd /tmp \
+    && uv sync --frozen --no-dev \
+    && cp -a /tmp/.venv /opt/venv \
+    && rm -rf /tmp/.venv /tmp/pyproject.toml /tmp/uv.lock
 
 COPY . /app
 
