@@ -32,7 +32,9 @@ from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app_services import IndexConfig, IndexService
 from query_services import ConversationalQueryService
-from settings import Settings, provider_guidance
+from settings import Settings
+from app_errors import ErrorCategory, user_message
+from app_logging import configure_logging, log_exception, new_correlation_id
 
 # ==========================================================
 # Page Configuration
@@ -60,6 +62,7 @@ load_css()
 # ==========================================================
 
 load_dotenv()
+configure_logging()
 
 settings = Settings.from_env()
 configuration_errors = settings.validate()
@@ -711,19 +714,20 @@ else:
 
             with st.spinner("Searching documents..."):
 
-                start = time.perf_counter()
+                correlation_id = new_correlation_id()
                 try:
                     query_result = build_query_service(top_k).ask(
                         user_prompt, history
                     )
                 except Exception as e:
-                    st.error(provider_guidance(e))
+                    log_exception(correlation_id, ErrorCategory.PROVIDER.value, e)
+                    st.error(
+                        f"{user_message(e)} Reference: {correlation_id}."
+                    )
                     st.stop()
                     
                 
                 st.session_state.last_citations = query_result.citations
-
-                elapsed = time.perf_counter() - start
 
             answer = query_result.answer
 
@@ -731,20 +735,10 @@ else:
             # Streaming animation
             # ----------------------------
 
-            placeholder = st.empty()
-
-            text = ""
-
-            for word in answer.split():
-
-                text += word + " "
-
-                placeholder.markdown(text)
-
-                time.sleep(0.02)
-
             st.caption(
-                f"⏱ Response Time: {elapsed:.2f} sec"
+                f"⏱ Retrieval: {query_result.retrieval_latency_ms:.0f} ms · "
+                f"Generation: {query_result.generation_latency_ms:.0f} ms · "
+                f"Total: {query_result.total_latency_ms:.0f} ms"
             )
 
             st.download_button(

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
+import time
 
 
 REFUSAL_RESPONSE = "I couldn't find that information in the uploaded documents."
@@ -21,6 +22,9 @@ class QueryResult:
     answer: str
     retrieval_query: str
     citations: tuple[CitationRecord, ...]
+    retrieval_latency_ms: float = 0.0
+    generation_latency_ms: float = 0.0
+    total_latency_ms: float = 0.0
 
 
 class ConversationalQueryService:
@@ -41,10 +45,12 @@ class ConversationalQueryService:
         self.max_results = max_results
 
     def ask(self, question: str, history: str = "") -> QueryResult:
+        started_at = time.perf_counter()
         retrieval_query = question
         if history.strip() and self.rewriter is not None:
             retrieval_query = self.rewriter(history, question).strip() or question
 
+        retrieval_started_at = time.perf_counter()
         retrieved = []
         seen = set()
         for document, score in self.retriever(retrieval_query):
@@ -60,6 +66,7 @@ class ConversationalQueryService:
             if len(retrieved) >= self.max_results:
                 break
 
+        retrieval_latency_ms = (time.perf_counter() - retrieval_started_at) * 1000
         citations = tuple(
             CitationRecord(
                 document=str(item.metadata.get("source", "Unknown")),
@@ -71,10 +78,20 @@ class ConversationalQueryService:
             for item, score, chunk_id in retrieved
         )
         if not retrieved:
-            return QueryResult(REFUSAL_RESPONSE, retrieval_query, citations)
+            total = (time.perf_counter() - started_at) * 1000
+            return QueryResult(
+                REFUSAL_RESPONSE, retrieval_query, citations,
+                retrieval_latency_ms, 0.0, total,
+            )
 
+        generation_started_at = time.perf_counter()
         answer = self.answerer(question, history, [item for item, _, _ in retrieved])
-        return QueryResult(answer, retrieval_query, citations)
+        generation_latency_ms = (time.perf_counter() - generation_started_at) * 1000
+        total = (time.perf_counter() - started_at) * 1000
+        return QueryResult(
+            answer, retrieval_query, citations,
+            retrieval_latency_ms, generation_latency_ms, total,
+        )
 
     @staticmethod
     def _page(metadata):
