@@ -32,6 +32,7 @@ from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app_services import IndexConfig, IndexService
 from query_services import ConversationalQueryService
+from settings import Settings, provider_guidance
 
 # ==========================================================
 # Page Configuration
@@ -60,18 +61,17 @@ load_css()
 
 load_dotenv()
 
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://ollama:11434")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-20b")
+settings = Settings.from_env()
+configuration_errors = settings.validate()
 
 # ==========================================================
 # Constants
 # ==========================================================
 
-PDF_DIRECTORY = "research_papers"
-FAISS_INDEX_PATH = "faiss_index"
 EMBEDDING_PROVIDER = "ollama"
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text:latest")
+PDF_DIRECTORY = str(settings.pdf_directory)
+FAISS_INDEX_PATH = str(settings.index_directory)
+EMBEDDING_MODEL = settings.embedding_model
 
 # ==========================================================
 # LLM
@@ -79,10 +79,10 @@ EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text:latest")
 
 llm = (
     ChatGroq(
-        groq_api_key=GROQ_API_KEY,
-        model=LLM_MODEL,
+        groq_api_key=settings.groq_api_key,
+        model=settings.llm_model,
     )
-    if GROQ_API_KEY
+    if settings.groq_api_key
     else None
 )
 
@@ -163,8 +163,8 @@ def get_embedding_model():
     if st.session_state.embeddings is None:
 
         st.session_state.embeddings = OllamaEmbeddings(
-            model="nomic-embed-text:latest",
-            base_url=OLLAMA_HOST,
+            model=settings.embedding_model,
+            base_url=settings.ollama_url,
         )
 
     return st.session_state.embeddings
@@ -183,8 +183,8 @@ index_service = IndexService(
     embedding_factory=get_embedding_model,
     loader_factory=PyPDFDirectoryLoader,
     splitter_factory=lambda: RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
     ),
     faiss_loader=FAISS.load_local,
 )
@@ -218,8 +218,8 @@ def create_vector_embedding(document_changes=None):
         return False
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
+        chunk_size=settings.chunk_size,
+        chunk_overlap=settings.chunk_overlap,
     )
 
     vectors = st.session_state.vectors
@@ -309,6 +309,12 @@ def initialize_session_state():
 
 initialize_session_state()
 
+if configuration_errors:
+    st.error("Invalid application configuration:")
+    for configuration_error in configuration_errors:
+        st.write(f"- {configuration_error}")
+    st.stop()
+
 current_state = get_pdf_state(PDF_DIRECTORY)
 pdf_files = get_pdf_files(PDF_DIRECTORY)
 current_document_manifest = get_document_manifest(PDF_DIRECTORY)
@@ -392,8 +398,8 @@ with st.sidebar:
     top_k = st.slider(
         "Top K Chunks",
         min_value=1,
-        max_value=10,
-        value=4,
+        max_value=settings.max_top_k,
+        value=settings.default_top_k,
     )
     if st.button(
             "🗑 Clear Chat",
@@ -408,10 +414,13 @@ with st.sidebar:
     st.subheader("System")
 
     if llm is None:
-        st.warning("GROQ_API_KEY is not configured. Answers are unavailable.")
+        st.warning(
+            "GROQ_API_KEY is not configured. Indexing is available, but answers "
+            "remain unavailable until the credential is added to .env."
+        )
 
     st.write(f"**LLM**")
-    st.caption(LLM_MODEL)
+    st.caption(settings.llm_model)
 
     st.write("**Embeddings**")
     st.caption("nomic-embed-text")
@@ -576,7 +585,7 @@ def build_query_service(top_k):
         retriever=retrieve,
         rewriter=rewrite if llm is not None else None,
         answerer=answer,
-        relevance_threshold=float(os.getenv("RETRIEVAL_RELEVANCE_THRESHOLD", "0.35")),
+        relevance_threshold=settings.relevance_threshold,
         max_results=top_k,
     )
 
@@ -708,7 +717,7 @@ else:
                         user_prompt, history
                     )
                 except Exception as e:
-                    st.error(f"Error while generating response:\n\n{e}")
+                    st.error(provider_guidance(e))
                     st.stop()
                     
                 

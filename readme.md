@@ -138,7 +138,22 @@ docker compose --profile persistence up --build
 ```env
 GROQ_API_KEY=YOUR_KEY
 OLLAMA_HOST=http://ollama:11434
+LLM_MODEL=openai/gpt-oss-20b
+EMBEDDING_MODEL=nomic-embed-text:latest
+PDF_DIRECTORY=research_papers
+INDEX_DIRECTORY=faiss_index
+CHUNK_SIZE=1000
+CHUNK_OVERLAP=200
+DEFAULT_TOP_K=4
+MAX_TOP_K=10
+RETRIEVAL_RELEVANCE_THRESHOLD=0.35
 ```
+
+`GROQ_API_KEY` is required only for answering questions; indexing remains
+available without it. Model names are passed directly to Groq and Ollama, so
+replace them with models available in your provider account. Invalid chunk or
+retrieval settings are rejected at startup, and credentials are never shown in
+configuration output.
 
 ---
 
