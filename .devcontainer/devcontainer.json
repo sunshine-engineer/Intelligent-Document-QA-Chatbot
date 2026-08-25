@@ -1,6 +1,9 @@
 {
     "name": "local-rag-assistant",
-    "dockerComposeFile": "../docker-compose_base.yml",
+    "dockerComposeFile": [
+        "../docker-compose.yml",
+        "../docker-compose.devcontainer.yml"
+    ],
     "service": "rag_chatbot",
     "workspaceFolder": "/app",
     "shutdownAction": "stopCompose",

@@ -124,8 +124,11 @@ with artifacts from an untrusted source.
 ```bash
 git clone <repo>
 cd project
-cp .env.example .env
+cp .env.sample .env
 docker compose up --build
+
+# Optional PostgreSQL profile; not required by the current FAISS workflow.
+docker compose --profile persistence up --build
 ```
 
 ---

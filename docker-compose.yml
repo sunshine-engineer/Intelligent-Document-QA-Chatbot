@@ -1,29 +1,83 @@
 services:
-
-  rag_chatbot:
-    build: .
-    container_name: rag_chatbot
+  ollama:
+    image: ollama/ollama:0.11.11
     restart: unless-stopped
     ports:
-      - "8501:8501"
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-10m}
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+  ollama-init:
+    image: ollama/ollama:0.11.11
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        set -eu;
+        echo "Ensuring Ollama model nomic-embed-text:latest is available";
+        ollama pull nomic-embed-text:latest;
+        echo "Ollama model initialization complete";
+    restart: "no"
+
+  rag_chatbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully
+    ports:
+      - "${STREAMLIT_PORT:-8501}:8501"
     env_file:
       - .env
     environment:
       OLLAMA_HOST: http://ollama:11434
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: chatbot 
-      DB_USER: chatbot
-      DB_PASSWORD: chatbot 
-    
-    networks:
-      - qa_chatbot_default
     volumes:
       - ./research_papers:/app/research_papers
       - ./vector_store:/app/vector_store
       - ./.streamlit:/app/.streamlit
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request; urllib.request.urlopen(
+          'http://127.0.0.1:8501/_stcore/health', timeout=3)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
+  postgres:
+    image: postgres:16.4
+    profiles: ["persistence"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-chatbot}
+      POSTGRES_USER: ${POSTGRES_USER:-chatbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chatbot}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-networks:
-  qa_chatbot_default:
-    external: true
+volumes:
+  ollama-data:
+  postgres-data:

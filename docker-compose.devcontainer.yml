@@ -1,0 +1,7 @@
+services:
+  rag_chatbot:
+    environment:
+      UV_PROJECT_ENVIRONMENT: /app/.venv
+    volumes:
+      - .:/app:cached
+    # The primary stack command and health check remain unchanged.
