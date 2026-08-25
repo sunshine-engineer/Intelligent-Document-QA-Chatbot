@@ -732,8 +732,10 @@ else:
             answer = query_result.answer
 
             # ----------------------------
-            # Streaming animation
+            # Render the completed provider response
             # ----------------------------
+
+            st.markdown(answer)
 
             st.caption(
                 f"⏱ Retrieval: {query_result.retrieval_latency_ms:.0f} ms · "
