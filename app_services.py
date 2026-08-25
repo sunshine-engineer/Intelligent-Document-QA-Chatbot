@@ -22,6 +22,9 @@ from index_metadata import (
     verify_index_manifest,
     is_valid_index_metrics,
 )
+import logging
+import time
+from app_logging import log_event, log_exception, new_correlation_id
 
 
 @dataclass(frozen=True)
@@ -50,12 +53,17 @@ class IndexService:
         self.faiss_loader = faiss_loader
 
     def load(self) -> tuple[Any, dict]:
+        correlation_id = new_correlation_id()
+        log_event(logging.INFO, "index_load_started", correlation_id=correlation_id,
+                  category="indexing", index_directory=self.config.index_directory)
         if not verify_index_manifest(
             self.config.index_directory,
             self.config.embedding_provider,
             self.config.embedding_model,
         ):
-            raise ValueError("Saved FAISS index verification failed")
+            error = ValueError("Saved FAISS index verification failed")
+            log_exception(correlation_id, "indexing", error)
+            raise error
 
         vectors = self.faiss_loader(
             self.config.index_directory,
@@ -70,10 +78,19 @@ class IndexService:
         metrics = metadata.get("metrics")
         if not is_valid_index_metrics(metrics):
             raise ValueError("Saved index metrics are unavailable")
+        log_event(logging.INFO, "index_load_completed", correlation_id=correlation_id,
+                  category="indexing", document_count=metrics["document_count"],
+                  chunk_count=metrics["chunk_count"])
         return vectors, metrics
 
     def build(self, document_changes=None, existing_vectors=None) -> tuple[Any, dict, list, list]:
+        correlation_id = new_correlation_id()
+        started_at = time.perf_counter()
+        log_event(logging.INFO, "index_build_started", correlation_id=correlation_id,
+                  category="indexing", incremental=bool(document_changes))
         docs = self.loader_factory(self.config.pdf_directory).load()
+        log_event(logging.INFO, "documents_loaded", correlation_id=correlation_id,
+                  category="ingestion", pages=len(docs))
         splitter = self.splitter_factory()
         vectors = existing_vectors
         documents_to_embed = docs
@@ -98,6 +115,8 @@ class IndexService:
             ]
 
         final_documents = splitter.split_documents(documents_to_embed)
+        log_event(logging.INFO, "documents_chunked", correlation_id=correlation_id,
+                  category="ingestion", chunks=len(final_documents))
         if vectors is None:
             # Import lazily so unit tests can inject a fake FAISS implementation.
             from langchain_community.vectorstores import FAISS
@@ -117,4 +136,8 @@ class IndexService:
             getattr(vectors.index, "d", None),
         ))
         save_metadata(get_pdf_state(self.config.pdf_directory), document_manifest, metrics)
+        log_event(logging.INFO, "index_build_completed", correlation_id=correlation_id,
+                  category="indexing", document_count=metrics["document_count"],
+                  chunk_count=metrics["chunk_count"],
+                  latency_ms=round((time.perf_counter() - started_at) * 1000, 2))
         return vectors, metrics, docs, final_documents

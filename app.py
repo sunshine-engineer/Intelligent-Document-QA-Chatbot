@@ -1,5 +1,6 @@
 import os
 import time
+import logging
 from json import JSONDecodeError
 
 import streamlit as st
@@ -34,7 +35,7 @@ from app_services import IndexConfig, IndexService
 from query_services import ConversationalQueryService
 from settings import Settings
 from app_errors import ErrorCategory, user_message
-from app_logging import configure_logging, log_exception, new_correlation_id
+from app_logging import configure_logging, log_event, log_exception, new_correlation_id
 
 # ==========================================================
 # Page Configuration
@@ -66,6 +67,10 @@ configure_logging()
 
 settings = Settings.from_env()
 configuration_errors = settings.validate()
+log_event(logging.INFO, "application_configuration_loaded", category="configuration",
+          llm_model=settings.llm_model, embedding_model=settings.embedding_model,
+          pdf_directory=settings.pdf_directory, index_directory=settings.index_directory,
+          default_top_k=settings.default_top_k)
 
 # ==========================================================
 # Constants
@@ -313,6 +318,8 @@ def initialize_session_state():
 initialize_session_state()
 
 if configuration_errors:
+    log_event(logging.ERROR, "invalid_configuration", category="configuration",
+              error_count=len(configuration_errors))
     st.error("Invalid application configuration:")
     for configuration_error in configuration_errors:
         st.write(f"- {configuration_error}")
@@ -342,6 +349,7 @@ needs_rebuild = needs_rebuild or any(
 )
 
 if not pdf_files:
+    log_event(logging.INFO, "knowledge_base_empty", category="ingestion")
     st.session_state.vectors = None
     if (
         isinstance(saved, dict)
@@ -361,6 +369,9 @@ if not pdf_files:
         "Add at least one PDF to research_papers/ to build the knowledge base."
     )
 elif needs_rebuild:
+    log_event(logging.INFO, "knowledge_base_rebuild_required", category="indexing",
+              added=len(document_changes["added"]), changed=len(document_changes["changed"]),
+              removed=len(document_changes["removed"]))
 
     with st.spinner("Indexing research papers..."):
 
@@ -375,6 +386,7 @@ elif needs_rebuild:
                 "embedding service, then use Refresh Knowledge Base."
             )
 else:
+    log_event(logging.INFO, "saved_index_reload_required", category="indexing")
     if not load_vector_store(show_error=False):
         with st.spinner("Recovering the knowledge base..."):
             try:
@@ -717,7 +729,7 @@ else:
                 correlation_id = new_correlation_id()
                 try:
                     query_result = build_query_service(top_k).ask(
-                        user_prompt, history
+                        user_prompt, history, correlation_id
                     )
                 except Exception as e:
                     log_exception(correlation_id, ErrorCategory.PROVIDER.value, e)

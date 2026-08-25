@@ -3,6 +3,9 @@
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 import time
+import logging
+
+from app_logging import log_event, new_correlation_id
 
 
 REFUSAL_RESPONSE = "I couldn't find that information in the uploaded documents."
@@ -44,11 +47,17 @@ class ConversationalQueryService:
         self.relevance_threshold = relevance_threshold
         self.max_results = max_results
 
-    def ask(self, question: str, history: str = "") -> QueryResult:
+    def ask(self, question: str, history: str = "", correlation_id: str | None = None) -> QueryResult:
+        correlation_id = correlation_id or new_correlation_id()
         started_at = time.perf_counter()
+        log_event(logging.INFO, "query_started", correlation_id=correlation_id,
+                  category="retrieval", history_present=bool(history.strip()),
+                  question_length=len(question))
         retrieval_query = question
         if history.strip() and self.rewriter is not None:
             retrieval_query = self.rewriter(history, question).strip() or question
+            log_event(logging.INFO, "query_rewritten", correlation_id=correlation_id,
+                      category="retrieval", query_length=len(retrieval_query))
 
         retrieval_started_at = time.perf_counter()
         retrieved = []
@@ -67,6 +76,9 @@ class ConversationalQueryService:
                 break
 
         retrieval_latency_ms = (time.perf_counter() - retrieval_started_at) * 1000
+        log_event(logging.INFO, "retrieval_completed", correlation_id=correlation_id,
+                  category="retrieval", candidates=len(retrieved),
+                  latency_ms=round(retrieval_latency_ms, 2))
         citations = tuple(
             CitationRecord(
                 document=str(item.metadata.get("source", "Unknown")),
@@ -79,6 +91,8 @@ class ConversationalQueryService:
         )
         if not retrieved:
             total = (time.perf_counter() - started_at) * 1000
+            log_event(logging.INFO, "query_refused_no_evidence", correlation_id=correlation_id,
+                      category="retrieval", latency_ms=round(total, 2))
             return QueryResult(
                 REFUSAL_RESPONSE, retrieval_query, citations,
                 retrieval_latency_ms, 0.0, total,
@@ -88,6 +102,9 @@ class ConversationalQueryService:
         answer = self.answerer(question, history, [item for item, _, _ in retrieved])
         generation_latency_ms = (time.perf_counter() - generation_started_at) * 1000
         total = (time.perf_counter() - started_at) * 1000
+        log_event(logging.INFO, "generation_completed", correlation_id=correlation_id,
+                  category="provider", answer_length=len(answer),
+                  latency_ms=round(generation_latency_ms, 2), total_ms=round(total, 2))
         return QueryResult(
             answer, retrieval_query, citations,
             retrieval_latency_ms, generation_latency_ms, total,
