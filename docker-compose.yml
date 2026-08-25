@@ -49,6 +49,7 @@ services:
       - ./research_papers:/app/research_papers
       - ./vector_store:/app/vector_store
       - ./.streamlit:/app/.streamlit
+      - ./logs:/app/logs
     healthcheck:
       test:
         - CMD-SHELL

@@ -1,20 +1,32 @@
 """Correlation-aware logging with secret and content safeguards."""
 
 import logging
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 import uuid
 
 
 LOGGER = logging.getLogger("rag_assistant")
 
 
-def configure_logging():
+def configure_logging(log_directory="logs"):
     if not LOGGER.handlers:
-        handler = logging.StreamHandler()
-        handler.setFormatter(logging.Formatter(
+        Path(log_directory).mkdir(parents=True, exist_ok=True)
+        formatter = logging.Formatter(
             "%(asctime)s %(levelname)s correlation_id=%(correlation_id)s "
             "category=%(category)s %(message)s"
-        ))
+        )
+        handler = logging.StreamHandler()
+        handler.setFormatter(formatter)
+        file_handler = RotatingFileHandler(
+            Path(log_directory) / "app.log",
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(formatter)
         LOGGER.addHandler(handler)
+        LOGGER.addHandler(file_handler)
         LOGGER.setLevel(logging.INFO)
 
 
