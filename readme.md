@@ -112,7 +112,8 @@ with artifacts from an untrusted source.
 ├── faiss_index/
 ├── .streamlit/
 ├── docker-compose.yml
-├── requirements.txt
+├── pyproject.toml
+├── uv.lock
 └── README.md
 ```
 

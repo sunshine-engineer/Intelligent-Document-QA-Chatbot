@@ -54,6 +54,13 @@ services:
       dockerfile: .devcontainer/Dockerfile
     container_name: rag_chatbot
     restart: unless-stopped
+    command: [
+      "streamlit",
+      "run",
+      "app.py",
+      "--server.port=8501",
+      "--server.address=0.0.0.0"
+    ]
     depends_on:
       ollama:
         condition: service_healthy

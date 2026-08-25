@@ -15,8 +15,8 @@ trap 'printf "\nSetup failed at line %s.\n" "$LINENO" >&2' ERR
 cd "${PROJECT_ROOT}"
 
 log "Validating project files"
-if [[ ! -f requirements.txt || ! -f app.py ]]; then
-    printf 'requirements.txt and app.py must exist in %s\n' "${PROJECT_ROOT}" >&2
+if [[ ! -f pyproject.toml || ! -f uv.lock || ! -f app.py ]]; then
+    printf 'pyproject.toml, uv.lock, and app.py must exist in %s\n' "${PROJECT_ROOT}" >&2
     exit 1
 fi
 
@@ -42,8 +42,8 @@ else
     uv venv "${PROJECT_ROOT}/.venv"
 fi
 
-log "Installing Python dependencies"
-uv pip install --python "${PROJECT_ROOT}/.venv/bin/python" -r requirements.txt
+log "Installing locked Python dependencies"
+uv sync --frozen
 
 if [[ ! -x "${PROJECT_ROOT}/.venv/bin/python" ]]; then
     printf 'uv did not create the expected environment at %s\n' \

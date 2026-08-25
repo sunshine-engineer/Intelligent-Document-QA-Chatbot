@@ -1,0 +1,37 @@
+[project]
+name = "intelligent-document-qa-chatbot"
+version = "0.1.0"
+description = "A local document question-answering assistant using FAISS and Ollama embeddings."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "faiss-cpu>=1.8,<2",
+    "langchain-classic>=1.0,<2",
+    "langchain-community>=0.4,<1",
+    "langchain-groq>=1.1,<2",
+    "langchain-ollama>=1.0,<2",
+    "langchain-text-splitters>=1.0,<2",
+    "pypdf>=5,<7",
+    "python-dotenv>=1,<2",
+    "streamlit>=1.40,<2",
+]
+
+[dependency-groups]
+dev = [
+    "black>=24,<27",
+    "mypy>=1.13,<2",
+    "ruff>=0.8,<1",
+    "pytest>=8,<10",
+]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.black]
+line-length = 88
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
