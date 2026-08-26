@@ -19,6 +19,21 @@ class ApplicationErrorTests(unittest.TestCase):
 
     def test_log_redaction_hides_credentials(self):
         self.assertNotIn("secret", _redact("GROQ_API_KEY=secret"))
+        self.assertNotIn(
+            "token-value", _redact("Authorization: Bearer token-value")
+        )
+
+    def test_expected_infrastructure_failures_are_safe_for_users(self):
+        failures = (
+            TimeoutError("provider timeout at private-host:443"),
+            PermissionError("authentication failed for GROQ_API_KEY=secret"),
+            ConnectionError("ollama unavailable at internal-host:11434"),
+        )
+        for failure in failures:
+            with self.subTest(error=type(failure).__name__):
+                message = user_message(failure)
+                self.assertNotIn(str(failure), message)
+                self.assertIn("try again", message.lower())
 
     def test_log_directory_is_created(self):
         with tempfile.TemporaryDirectory() as directory:

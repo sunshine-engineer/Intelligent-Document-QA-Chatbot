@@ -3,6 +3,7 @@
 import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+import re
 import uuid
 
 
@@ -57,7 +58,17 @@ def log_event(level: int, message: str, *, correlation_id="system", category="ap
 
 
 def _redact(value: str) -> str:
-    for marker in ("GROQ_API_KEY=", "OPENAI_API_KEY=", "Authorization:"):
-        if marker in value:
-            return value.split(marker, 1)[0] + marker + "[REDACTED]"
-    return value
+    redacted = re.sub(
+        r"(?i)(GROQ_API_KEY|OPENAI_API_KEY)\s*[:=]\s*[^\s,;}]+",
+        r"\1=[REDACTED]",
+        value,
+    )
+    redacted = re.sub(
+        r"(?i)Authorization\s*[:=]\s*[^,;}]+",
+        "Authorization=[REDACTED]",
+        redacted,
+    )
+    # Provider errors can include serialized request payloads. Keep the
+    # diagnostic type/summary while preventing full prompts or documents from
+    # becoming durable log content.
+    return redacted[:1000]

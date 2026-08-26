@@ -195,6 +195,7 @@ index_service = IndexService(
         chunk_overlap=settings.chunk_overlap,
     ),
     faiss_loader=FAISS.load_local,
+    faiss_factory=FAISS.from_documents,
 )
 
 def create_vector_embedding(document_changes=None):
@@ -378,6 +379,11 @@ elif needs_rebuild:
         try:
             if not load_vector_store(show_error=False):
                 st.session_state.vectors = None
+                log_event(
+                    logging.INFO,
+                    "verified_base_index_unavailable_full_rebuild_selected",
+                    category="indexing",
+                )
             create_vector_embedding(document_changes)
         except Exception as error:
             correlation_id = new_correlation_id()
@@ -602,10 +608,19 @@ def build_query_service(top_k):
             "context": documents,
         })
 
+    def stream_answer(question, history, documents):
+        chain = create_stuff_documents_chain(llm, prompt)
+        return chain.stream({
+            "input": question,
+            "history": history,
+            "context": documents,
+        })
+
     return ConversationalQueryService(
         retriever=retrieve,
         rewriter=rewrite if llm is not None else None,
         answerer=answer,
+        answer_streamer=stream_answer,
         relevance_threshold=settings.relevance_threshold,
         max_results=top_k,
     )
@@ -734,9 +749,10 @@ else:
 
                 correlation_id = new_correlation_id()
                 try:
-                    query_result = build_query_service(top_k).ask(
+                    query_result = build_query_service(top_k).ask_stream(
                         user_prompt, history, correlation_id
                     )
+                    answer = st.write_stream(query_result.stream)
                 except Exception as e:
                     log_exception(correlation_id, ErrorCategory.PROVIDER.value, e)
                     st.error(
@@ -747,18 +763,11 @@ else:
                 
                 st.session_state.last_citations = query_result.citations
 
-            answer = query_result.answer
-
-            # ----------------------------
-            # Render the completed provider response
-            # ----------------------------
-
-            st.markdown(answer)
-
             st.caption(
-                f"⏱ Retrieval: {query_result.retrieval_latency_ms:.0f} ms · "
-                f"Generation: {query_result.generation_latency_ms:.0f} ms · "
-                f"Total: {query_result.total_latency_ms:.0f} ms"
+                f"⏱ Retrieval: {query_result.timings.retrieval_latency_ms:.0f} ms · "
+                f"First token: {query_result.timings.first_token_latency_ms or 0:.0f} ms · "
+                f"Generation: {query_result.timings.generation_latency_ms:.0f} ms · "
+                f"Total: {query_result.timings.total_latency_ms:.0f} ms"
             )
 
             st.download_button(

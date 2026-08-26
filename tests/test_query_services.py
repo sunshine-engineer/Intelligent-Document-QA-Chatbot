@@ -49,6 +49,42 @@ class ConversationalQueryTests(unittest.TestCase):
         self.assertEqual(result.answer, REFUSAL_RESPONSE)
         self.assertEqual(result.citations, ())
 
+    def test_streaming_yields_provider_chunks_before_completion(self):
+        events = []
+
+        def stream_answer(*_):
+            events.append("started")
+            yield "first "
+            events.append("continued")
+            yield "second"
+
+        service = ConversationalQueryService(
+            retriever=lambda _: [(document("paper.pdf", 0, "a", "evidence"), .9)],
+            answerer=lambda *_: "unused",
+            answer_streamer=stream_answer,
+        )
+        result = service.ask_stream("Question")
+        self.assertEqual(events, [])
+        self.assertEqual(next(result.stream), "first ")
+        self.assertEqual(events, ["started"])
+        self.assertEqual("".join(result.stream), "second")
+        self.assertIsNotNone(result.timings.first_token_latency_ms)
+
+    def test_mid_stream_failure_is_propagated(self):
+        def failing_stream(*_):
+            yield "partial"
+            raise TimeoutError("provider timeout")
+
+        service = ConversationalQueryService(
+            retriever=lambda _: [(document("paper.pdf", 0, "a", "evidence"), .9)],
+            answerer=lambda *_: "unused",
+            answer_streamer=failing_stream,
+        )
+        result = service.ask_stream("Question")
+        self.assertEqual(next(result.stream), "partial")
+        with self.assertRaises(TimeoutError):
+            next(result.stream)
+
 
 if __name__ == "__main__":
     unittest.main()
