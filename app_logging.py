@@ -6,7 +6,6 @@ from pathlib import Path
 import re
 import uuid
 
-
 LOGGER = logging.getLogger("rag_assistant")
 
 
@@ -40,14 +39,18 @@ def log_exception(correlation_id: str, category: str, error: Exception):
         "operation failed error_type=%s error=%s",
         type(error).__name__,
         _redact(str(error)),
-        exc_info=(error.__class__, error, error.__traceback__)
-        if error.__traceback__ is not None
-        else False,
+        exc_info=(
+            (error.__class__, error, error.__traceback__)
+            if error.__traceback__ is not None
+            else False
+        ),
         extra={"correlation_id": correlation_id, "category": category},
     )
 
 
-def log_event(level: int, message: str, *, correlation_id="system", category="app", **context):
+def log_event(
+    level: int, message: str, *, correlation_id="system", category="app", **context
+):
     LOGGER.log(
         level,
         "%s %s",

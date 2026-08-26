@@ -8,9 +8,11 @@ from app_logging import LOGGER, _redact, configure_logging
 
 class ApplicationErrorTests(unittest.TestCase):
     def test_categories_have_safe_retry_message(self):
-        message = user_message(ApplicationError(
-            ErrorCategory.PROVIDER, "Provider unavailable", retryable=True
-        ))
+        message = user_message(
+            ApplicationError(
+                ErrorCategory.PROVIDER, "Provider unavailable", retryable=True
+            )
+        )
         self.assertIn("Provider error", message)
         self.assertIn("Try again", message)
 
@@ -19,9 +21,7 @@ class ApplicationErrorTests(unittest.TestCase):
 
     def test_log_redaction_hides_credentials(self):
         self.assertNotIn("secret", _redact("GROQ_API_KEY=secret"))
-        self.assertNotIn(
-            "token-value", _redact("Authorization: Bearer token-value")
-        )
+        self.assertNotIn("token-value", _redact("Authorization: Bearer token-value"))
 
     def test_expected_infrastructure_failures_are_safe_for_users(self):
         failures = (

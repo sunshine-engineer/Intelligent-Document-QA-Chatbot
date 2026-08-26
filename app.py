@@ -27,7 +27,6 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_classic.chains.combine_documents import (
     create_stuff_documents_chain,
 )
-from langchain_classic.chains import create_retrieval_chain
 from langchain_ollama import OllamaEmbeddings
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -56,6 +55,7 @@ def load_css():
             unsafe_allow_html=True,
         )
 
+
 load_css()
 
 # ==========================================================
@@ -67,10 +67,16 @@ configure_logging()
 
 settings = Settings.from_env()
 configuration_errors = settings.validate()
-log_event(logging.INFO, "application_configuration_loaded", category="configuration",
-          llm_model=settings.llm_model, embedding_model=settings.embedding_model,
-          pdf_directory=settings.pdf_directory, index_directory=settings.index_directory,
-          default_top_k=settings.default_top_k)
+log_event(
+    logging.INFO,
+    "application_configuration_loaded",
+    category="configuration",
+    llm_model=settings.llm_model,
+    embedding_model=settings.embedding_model,
+    pdf_directory=settings.pdf_directory,
+    index_directory=settings.index_directory,
+    default_top_k=settings.default_top_k,
+)
 
 # ==========================================================
 # Constants
@@ -162,9 +168,11 @@ def load_vector_store(show_error=True):
 
     return False
 
+
 # ==========================================================
 # Embedding Model
 # ==========================================================
+
 
 def get_embedding_model():
 
@@ -176,6 +184,7 @@ def get_embedding_model():
         )
 
     return st.session_state.embeddings
+
 
 # ==========================================================
 # Build Embeddings
@@ -197,6 +206,7 @@ index_service = IndexService(
     faiss_loader=FAISS.load_local,
     faiss_factory=FAISS.from_documents,
 )
+
 
 def create_vector_embedding(document_changes=None):
 
@@ -254,8 +264,7 @@ def create_vector_embedding(document_changes=None):
         documents_to_embed = [
             document
             for document in docs
-            if os.path.basename(document.metadata.get("source", ""))
-            in changed_paths
+            if os.path.basename(document.metadata.get("source", "")) in changed_paths
         ]
     else:
         vectors = None
@@ -315,12 +324,15 @@ def initialize_session_state():
             st.session_state[key] = value
 
 
-
 initialize_session_state()
 
 if configuration_errors:
-    log_event(logging.ERROR, "invalid_configuration", category="configuration",
-              error_count=len(configuration_errors))
+    log_event(
+        logging.ERROR,
+        "invalid_configuration",
+        category="configuration",
+        error_count=len(configuration_errors),
+    )
     st.error("Invalid application configuration:")
     for configuration_error in configuration_errors:
         st.write(f"- {configuration_error}")
@@ -352,10 +364,7 @@ needs_rebuild = needs_rebuild or any(
 if not pdf_files:
     log_event(logging.INFO, "knowledge_base_empty", category="ingestion")
     st.session_state.vectors = None
-    if (
-        isinstance(saved, dict)
-        and saved.get("document_manifest", {}).get("documents")
-    ):
+    if isinstance(saved, dict) and saved.get("document_manifest", {}).get("documents"):
         discard_persisted_index(FAISS_INDEX_PATH)
         empty_metrics = {
             "schema_version": 1,
@@ -370,9 +379,14 @@ if not pdf_files:
         "Add at least one PDF to research_papers/ to build the knowledge base."
     )
 elif needs_rebuild:
-    log_event(logging.INFO, "knowledge_base_rebuild_required", category="indexing",
-              added=len(document_changes["added"]), changed=len(document_changes["changed"]),
-              removed=len(document_changes["removed"]))
+    log_event(
+        logging.INFO,
+        "knowledge_base_rebuild_required",
+        category="indexing",
+        added=len(document_changes["added"]),
+        changed=len(document_changes["changed"]),
+        removed=len(document_changes["removed"]),
+    )
 
     with st.spinner("Indexing research papers..."):
 
@@ -429,9 +443,9 @@ with st.sidebar:
         value=settings.default_top_k,
     )
     if st.button(
-            "🗑 Clear Chat",
-            use_container_width=True,
-        ):
+        "🗑 Clear Chat",
+        use_container_width=True,
+    ):
 
         st.session_state.messages.clear()
         st.toast("Conversation cleared")
@@ -446,7 +460,7 @@ with st.sidebar:
             "remain unavailable until the credential is added to .env."
         )
 
-    st.write(f"**LLM**")
+    st.write("**LLM**")
     st.caption(settings.llm_model)
 
     st.write("**Embeddings**")
@@ -484,9 +498,8 @@ with st.sidebar:
     )
 
     if st.session_state.index_metrics:
-        st.caption(
-            f"Last indexed: {st.session_state.index_metrics.get('indexed_at', 'Unavailable')}"
-        )
+        indexed_at = st.session_state.index_metrics.get("indexed_at", "Unavailable")
+        st.caption(f"Last indexed: {indexed_at}")
 
     st.divider()
 
@@ -503,9 +516,7 @@ with st.sidebar:
 
             elapsed = time.perf_counter() - start
 
-        st.success(
-            f"Knowledge Base created in {elapsed:.2f} sec"
-        )
+        st.success(f"Knowledge Base created in {elapsed:.2f} sec")
 
     if st.button(
         "📂 Load Saved Index",
@@ -527,6 +538,7 @@ with st.sidebar:
 # Conversation History Helper
 # ==========================================================
 
+
 def build_chat_history():
 
     history = ""
@@ -536,19 +548,16 @@ def build_chat_history():
 
     for message in previous_messages[-10:]:
 
-        history += (
-            f"{message['role'].capitalize()}: "
-            f"{message['content']}\n"
-        )
+        history += f"{message['role'].capitalize()}: " f"{message['content']}\n"
 
     return history
+
 
 # ==========================================================
 # Prompt
 # ==========================================================
 
-prompt = ChatPromptTemplate.from_template(
-    """
+prompt = ChatPromptTemplate.from_template("""
 You are a helpful AI Research Assistant.
 
 Use ONLY the retrieved context to answer the question.
@@ -577,14 +586,11 @@ Instructions:
 - Quote important values exactly.
 - format the output so that its easier to read
 - Use bullet points when appropriate.
-"""
-)
+""")
 
 
 def build_query_service(top_k):
-    retriever = st.session_state.vectors.as_retriever(
-        search_kwargs={"k": top_k}
-    )
+    retriever = st.session_state.vectors.as_retriever(search_kwargs={"k": top_k})
 
     def retrieve(query):
         return retriever.vectorstore.similarity_search_with_relevance_scores(
@@ -596,25 +602,29 @@ def build_query_service(top_k):
             "Rewrite the follow-up as a standalone search query.\n"
             "Conversation:\n{history}\nFollow-up:\n{question}"
         )
-        return llm.invoke(rewrite_prompt.format_messages(
-            history=history, question=question
-        )).content
+        return llm.invoke(
+            rewrite_prompt.format_messages(history=history, question=question)
+        ).content
 
     def answer(question, history, documents):
         chain = create_stuff_documents_chain(llm, prompt)
-        return chain.invoke({
-            "input": question,
-            "history": history,
-            "context": documents,
-        })
+        return chain.invoke(
+            {
+                "input": question,
+                "history": history,
+                "context": documents,
+            }
+        )
 
     def stream_answer(question, history, documents):
         chain = create_stuff_documents_chain(llm, prompt)
-        return chain.stream({
-            "input": question,
-            "history": history,
-            "context": documents,
-        })
+        return chain.stream(
+            {
+                "input": question,
+                "history": history,
+                "context": documents,
+            }
+        )
 
     return ConversationalQueryService(
         retriever=retrieve,
@@ -624,6 +634,7 @@ def build_query_service(top_k):
         relevance_threshold=settings.relevance_threshold,
         max_results=top_k,
     )
+
 
 # ==========================================================
 # Main UI
@@ -646,11 +657,11 @@ if st.session_state.vectors is None:
     if st.session_state.startup_message:
         st.warning(st.session_state.startup_message)
 
-    st.info(
-        """
+    st.info("""
 ### 👋 Welcome!
 
-This application lets you query your local research papers using a Retrieval-Augmented Generation (RAG) pipeline.
+This application lets you query local research papers using a
+Retrieval-Augmented Generation (RAG) pipeline.
 
 ### Current Stack
 
@@ -672,34 +683,29 @@ research_papers/
 4. Start chatting with your documents
 
 ---
-"""
-    )
+""")
 
 else:
     st.success("✅ Knowledge Base Ready")
 
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
         st.metric(
             "Documents",
-            st.session_state.index_metrics.get("document_count", "Unavailable")
+            st.session_state.index_metrics.get("document_count", "Unavailable"),
         )
-    
+
     with col2:
         st.metric(
-            "Chunks",
-            st.session_state.index_metrics.get("chunk_count", "Unavailable")
+            "Chunks", st.session_state.index_metrics.get("chunk_count", "Unavailable")
         )
-    
+
     with col3:
-        st.metric(
-            "Top-K",
-            top_k
-        )
-    
+        st.metric("Top-K", top_k)
+
     st.divider()
-    
+
     # ----------------------------
     # Display previous messages
     # ----------------------------
@@ -710,9 +716,7 @@ else:
 
             st.markdown(message["content"])
 
-    user_prompt = st.chat_input(
-        "Ask something about your documents..."
-    )
+    user_prompt = st.chat_input("Ask something about your documents...")
 
     if user_prompt:
 
@@ -731,8 +735,10 @@ else:
             }
         )
 
-        with st.chat_message("user",
-                             avatar="👤",):
+        with st.chat_message(
+            "user",
+            avatar="👤",
+        ):
 
             st.markdown(user_prompt)
 
@@ -742,8 +748,10 @@ else:
 
         history = build_chat_history()
 
-        with st.chat_message("assistant",
-                             avatar="🤖",):
+        with st.chat_message(
+            "assistant",
+            avatar="🤖",
+        ):
 
             with st.spinner("Searching documents..."):
 
@@ -755,17 +763,15 @@ else:
                     answer = st.write_stream(query_result.stream)
                 except Exception as e:
                     log_exception(correlation_id, ErrorCategory.PROVIDER.value, e)
-                    st.error(
-                        f"{user_message(e)} Reference: {correlation_id}."
-                    )
+                    st.error(f"{user_message(e)} Reference: {correlation_id}.")
                     st.stop()
-                    
-                
+
                 st.session_state.last_citations = query_result.citations
 
             st.caption(
                 f"⏱ Retrieval: {query_result.timings.retrieval_latency_ms:.0f} ms · "
-                f"First token: {query_result.timings.first_token_latency_ms or 0:.0f} ms · "
+                "First token: "
+                f"{query_result.timings.first_token_latency_ms or 0:.0f} ms · "
                 f"Generation: {query_result.timings.generation_latency_ms:.0f} ms · "
                 f"Total: {query_result.timings.total_latency_ms:.0f} ms"
             )
@@ -792,35 +798,33 @@ else:
         # ----------------------------
         # Sources
         # ----------------------------
-        
+
         if "last_citations" in st.session_state:
             with st.expander(
                 f"📚 Retrieved Sources ({len(query_result.citations)})",
                 expanded=False,
             ):
-            
+
                 for i, citation in enumerate(query_result.citations, start=1):
-            
+
                     st.markdown(f"### 📄 Source {i}")
-            
-                    col1, col2 = st.columns([3,1])
-            
+
+                    col1, col2 = st.columns([3, 1])
+
                     with col1:
-                        st.write(
-                            f"**File:** {os.path.basename(citation.document)}"
-                        )
-            
+                        st.write(f"**File:** {os.path.basename(citation.document)}")
+
                     with col2:
                         if citation.page is not None:
                             st.write(f"**Page:** {citation.page}")
-            
+
                     st.code(
                         citation.excerpt,
                         language=None,
                     )
                     st.caption(
-                        f"Chunk: {citation.chunk_id} · Score: {citation.retrieval_score:.3f}"
+                        f"Chunk: {citation.chunk_id} · "
+                        f"Score: {citation.retrieval_score:.3f}"
                     )
-            
-                    st.divider()
 
+                    st.divider()

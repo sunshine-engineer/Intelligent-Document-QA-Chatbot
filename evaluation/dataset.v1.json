@@ -1,0 +1,42 @@
+{
+  "version": "v1",
+  "description": "Synthetic offline retrieval regression dataset. It validates retrieval wiring, citation mapping, refusal behavior, and metric calculation; it is not a substitute for live-provider evaluation.",
+  "documents": [
+    {
+      "source": "attention.pdf",
+      "page": 0,
+      "chunk_id": "attention-intro",
+      "content": "Attention allows a model to weigh relevant tokens when processing an input sequence."
+    },
+    {
+      "source": "llm.pdf",
+      "page": 2,
+      "chunk_id": "llm-context",
+      "content": "Large language models use context windows to condition generated output on supplied text."
+    }
+  ],
+  "cases": [
+    {
+      "id": "standalone-attention",
+      "question": "What does attention do?",
+      "expected_sources": ["attention.pdf"],
+      "expected_pages": [1],
+      "answerable": true
+    },
+    {
+      "id": "follow-up-context",
+      "history": "User: Tell me about large language models.",
+      "question": "What does it use to condition output?",
+      "expected_sources": ["llm.pdf"],
+      "expected_pages": [3],
+      "answerable": true
+    },
+    {
+      "id": "unsupported",
+      "question": "What is the capital of France?",
+      "expected_sources": [],
+      "expected_pages": [],
+      "answerable": false
+    }
+  ]
+}

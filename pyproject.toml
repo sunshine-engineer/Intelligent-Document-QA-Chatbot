@@ -19,6 +19,7 @@ dependencies = [
 dev = [
     "black>=24,<27",
     "mypy>=1.13,<2",
+    "pytest-cov>=6,<8",
     "ruff>=0.8,<1",
     "pytest>=8,<10",
 ]
@@ -33,5 +34,39 @@ line-length = 88
 line-length = 88
 target-version = "py312"
 
+[tool.ruff.lint]
+select = ["E", "F"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-config --strict-markers"
+
+[tool.coverage.run]
+branch = true
+source = [
+    "app_errors",
+    "app_logging",
+    "app_services",
+    "index_metadata",
+    "query_services",
+    "settings",
+]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+skip_covered = true
+
+[tool.mypy]
+python_version = "3.12"
+files = [
+    "app_errors.py",
+    "app_logging.py",
+    "app_services.py",
+    "index_metadata.py",
+    "query_services.py",
+    "settings.py",
+]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true

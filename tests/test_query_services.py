@@ -19,7 +19,9 @@ class ConversationalQueryTests(unittest.TestCase):
         queries = []
 
         service = ConversationalQueryService(
-            retriever=lambda query: (queries.append(query) or [(first, .9), (duplicate, .8), (second, .7)]),
+            retriever=lambda query: (
+                queries.append(query) or [(first, 0.9), (duplicate, 0.8), (second, 0.7)]
+            ),
             rewriter=lambda history, question: "standalone rewritten query",
             answerer=lambda question, history, docs: "supported answer",
         )
@@ -28,22 +30,26 @@ class ConversationalQueryTests(unittest.TestCase):
 
         self.assertEqual(queries, ["standalone rewritten query"])
         self.assertEqual(result.answer, "supported answer")
-        self.assertEqual([citation.chunk_id for citation in result.citations], ["a", "b"])
+        self.assertEqual(
+            [citation.chunk_id for citation in result.citations], ["a", "b"]
+        )
         self.assertEqual(result.citations[0].page, 1)
 
     def test_standalone_question_does_not_rewrite(self):
         service = ConversationalQueryService(
-            retriever=lambda query: [(document("paper.pdf", 1, "a", "evidence"), .9)],
+            retriever=lambda query: [(document("paper.pdf", 1, "a", "evidence"), 0.9)],
             rewriter=lambda *_: self.fail("rewriter should not be called"),
             answerer=lambda *_: "answer",
         )
-        self.assertEqual(service.ask("What is attention?").retrieval_query, "What is attention?")
+        self.assertEqual(
+            service.ask("What is attention?").retrieval_query, "What is attention?"
+        )
 
     def test_empty_or_low_score_evidence_returns_refusal(self):
         service = ConversationalQueryService(
-            retriever=lambda _: [(document("paper.pdf", 0, "a", "weak"), .2)],
+            retriever=lambda _: [(document("paper.pdf", 0, "a", "weak"), 0.2)],
             answerer=lambda *_: self.fail("answerer should not be called"),
-            relevance_threshold=.35,
+            relevance_threshold=0.35,
         )
         result = service.ask("Unsupported question")
         self.assertEqual(result.answer, REFUSAL_RESPONSE)
@@ -59,7 +65,7 @@ class ConversationalQueryTests(unittest.TestCase):
             yield "second"
 
         service = ConversationalQueryService(
-            retriever=lambda _: [(document("paper.pdf", 0, "a", "evidence"), .9)],
+            retriever=lambda _: [(document("paper.pdf", 0, "a", "evidence"), 0.9)],
             answerer=lambda *_: "unused",
             answer_streamer=stream_answer,
         )
@@ -76,7 +82,7 @@ class ConversationalQueryTests(unittest.TestCase):
             raise TimeoutError("provider timeout")
 
         service = ConversationalQueryService(
-            retriever=lambda _: [(document("paper.pdf", 0, "a", "evidence"), .9)],
+            retriever=lambda _: [(document("paper.pdf", 0, "a", "evidence"), 0.9)],
             answerer=lambda *_: "unused",
             answer_streamer=failing_stream,
         )

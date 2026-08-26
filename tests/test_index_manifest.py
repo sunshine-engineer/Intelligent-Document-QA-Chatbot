@@ -107,9 +107,7 @@ class IndexManifestTests(unittest.TestCase):
             (index_directory / "index.faiss").write_bytes(b"old")
             (index_directory / "index.pkl").write_bytes(b"old")
 
-            index_metadata.save_faiss_index_atomically(
-                FakeVectors(), index_directory
-            )
+            index_metadata.save_faiss_index_atomically(FakeVectors(), index_directory)
 
             self.assertEqual((index_directory / "index.faiss").read_bytes(), b"new")
             self.assertEqual((index_directory / "index.pkl").read_bytes(), b"new")

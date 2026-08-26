@@ -93,7 +93,7 @@ with artifacts from an untrusted source.
 | Component | Technology |
 |-----------|------------|
 | UI | Streamlit |
-| LLM | Groq Llama 3.1 8B Instant |
+| LLM | Groq (configurable model) |
 | Embeddings | Ollama + nomic-embed-text |
 | Vector DB | FAISS |
 | Framework | LangChain |
@@ -167,14 +167,26 @@ configuration output.
 
 ---
 
+# Quality and evaluation
+
+Pull requests run frozen dependency installation, formatting, linting, type
+checking, core-module coverage, unit/integration-style tests, and a
+provider-free retrieval evaluation. The versioned synthetic evaluation fixture
+currently produces Recall@K 1.0, MRR 1.0, citation correctness 1.0, and refusal
+accuracy 1.0. These are deterministic regression-safety results only; they do
+not measure live Groq/Ollama or real-world document quality.
+
+See [quality gate instructions](docs/quality-gates.md) for the exact commands,
+coverage threshold, CI artifacts, and optional secret-gated live checks.
+
+---
+
 # Future Improvements
 
 - Incremental indexing
 - Hybrid Search (BM25 + FAISS)
 - Cross-encoder reranking
 - PostgreSQL metadata storage
-- Streaming token generation
-- Logging
 - Authentication
 
 ---

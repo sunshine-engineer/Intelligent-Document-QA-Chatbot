@@ -25,9 +25,7 @@ class FakeVectors:
     docstore = FakeDocstore(
         {
             "chunk-a": type("Document", (), {"metadata": {"source": "a.pdf"}})(),
-            "chunk-a-2": type(
-                "Document", (), {"metadata": {"source": "a.pdf"}}
-            )(),
+            "chunk-a-2": type("Document", (), {"metadata": {"source": "a.pdf"}})(),
             "chunk-b": type("Document", (), {"metadata": {"source": "b.pdf"}})(),
         }
     )
