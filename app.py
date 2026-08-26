@@ -379,11 +379,14 @@ elif needs_rebuild:
             if not load_vector_store(show_error=False):
                 st.session_state.vectors = None
             create_vector_embedding(document_changes)
-        except Exception:
+        except Exception as error:
+            correlation_id = new_correlation_id()
+            log_exception(correlation_id, ErrorCategory.INDEXING.value, error)
             st.session_state.vectors = None
             st.session_state.startup_message = (
                 "Knowledge-base indexing failed. Check the PDF files and "
-                "embedding service, then use Refresh Knowledge Base."
+                f"embedding service, then use Refresh Knowledge Base. "
+                f"Reference: {correlation_id}."
             )
 else:
     log_event(logging.INFO, "saved_index_reload_required", category="indexing")
@@ -391,11 +394,14 @@ else:
         with st.spinner("Recovering the knowledge base..."):
             try:
                 create_vector_embedding()
-            except Exception:
+            except Exception as error:
+                correlation_id = new_correlation_id()
+                log_exception(correlation_id, ErrorCategory.INDEXING.value, error)
                 st.session_state.vectors = None
                 st.session_state.startup_message = (
                     "The saved index could not be loaded or rebuilt. "
-                    "Use Refresh Knowledge Base after checking the services."
+                    "Use Refresh Knowledge Base after checking the services. "
+                    f"Reference: {correlation_id}."
                 )
 
 
