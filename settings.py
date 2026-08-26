@@ -22,10 +22,27 @@ class Settings:
     default_top_k: int
     max_top_k: int
     relevance_threshold: float
+    parse_errors: tuple[str, ...] = ()
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None):
         env = os.environ if environ is None else environ
+        parse_errors: list[str] = []
+
+        def integer(name: str, default: int) -> int:
+            try:
+                return int(env.get(name, str(default)))
+            except ValueError:
+                parse_errors.append(f"{name} must be an integer.")
+                return default
+
+        def decimal(name: str, default: float) -> float:
+            try:
+                return float(env.get(name, str(default)))
+            except ValueError:
+                parse_errors.append(f"{name} must be a number.")
+                return default
+
         return cls(
             groq_api_key=env.get("GROQ_API_KEY") or None,
             llm_model=env.get("LLM_MODEL", DEFAULT_GROQ_MODEL),
@@ -33,15 +50,16 @@ class Settings:
             ollama_url=env.get("OLLAMA_HOST", "http://ollama:11434"),
             pdf_directory=Path(env.get("PDF_DIRECTORY", "research_papers")),
             index_directory=Path(env.get("INDEX_DIRECTORY", "faiss_index")),
-            chunk_size=int(env.get("CHUNK_SIZE", "1000")),
-            chunk_overlap=int(env.get("CHUNK_OVERLAP", "200")),
-            default_top_k=int(env.get("DEFAULT_TOP_K", "4")),
-            max_top_k=int(env.get("MAX_TOP_K", "10")),
-            relevance_threshold=float(env.get("RETRIEVAL_RELEVANCE_THRESHOLD", "0.35")),
+            chunk_size=integer("CHUNK_SIZE", 1000),
+            chunk_overlap=integer("CHUNK_OVERLAP", 200),
+            default_top_k=integer("DEFAULT_TOP_K", 4),
+            max_top_k=integer("MAX_TOP_K", 10),
+            relevance_threshold=decimal("RETRIEVAL_RELEVANCE_THRESHOLD", 0.35),
+            parse_errors=tuple(parse_errors),
         )
 
     def validate(self) -> list[str]:
-        errors = []
+        errors = list(self.parse_errors)
         if not self.llm_model.strip():
             errors.append("LLM_MODEL must not be empty.")
         if not self.embedding_model.strip():
@@ -81,8 +99,13 @@ class Settings:
 
 def provider_guidance(error: Exception) -> str:
     """Return actionable guidance without exposing credentials."""
-    return (
-        f"Provider request failed: {error}. Verify GROQ_API_KEY is configured "
-        "and that LLM_MODEL is an available model for the configured provider. "
-        "Do not include API keys in logs or error reports."
-    )
+    text = str(error).lower()
+    if any(marker in text for marker in ("401", "403", "auth", "api key")):
+        return "Groq authentication failed. Verify GROQ_API_KEY and restart the app."
+    if any(marker in text for marker in ("404", "not found", "model")):
+        return "The configured model is unavailable. Choose an available LLM_MODEL."
+    if any(marker in text for marker in ("timeout", "timed out")):
+        return "The provider timed out. Retry shortly and verify network availability."
+    if any(marker in text for marker in ("ollama", "connection refused", "connect")):
+        return "Ollama is unavailable. Start Ollama and verify OLLAMA_HOST."
+    return "The provider request failed. Verify the configured provider and model."

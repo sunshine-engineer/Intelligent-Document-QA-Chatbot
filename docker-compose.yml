@@ -22,12 +22,13 @@ services:
         condition: service_healthy
     environment:
       OLLAMA_HOST: http://ollama:11434
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text:latest}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >-
         set -eu;
-        echo "Ensuring Ollama model nomic-embed-text:latest is available";
-        ollama pull nomic-embed-text:latest;
+        echo "Ensuring configured Ollama embedding model is available";
+        ollama pull "$${EMBEDDING_MODEL}";
         echo "Ollama model initialization complete";
     restart: "no"
 

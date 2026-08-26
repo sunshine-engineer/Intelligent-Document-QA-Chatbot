@@ -33,8 +33,8 @@ from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app_services import IndexConfig, IndexService
 from query_services import ConversationalQueryService
-from settings import Settings
-from app_errors import ErrorCategory, user_message
+from settings import Settings, provider_guidance
+from app_errors import ErrorCategory
 from app_logging import configure_logging, log_event, log_exception, new_correlation_id
 
 # ==========================================================
@@ -465,7 +465,10 @@ with st.sidebar:
     st.caption(settings.llm_model)
 
     st.write("**Embeddings**")
-    st.caption("nomic-embed-text")
+    st.caption(settings.embedding_model)
+    st.caption("Effective configuration is validated; credentials are redacted.")
+    with st.expander("Effective configuration", expanded=False):
+        st.json(settings.redacted_summary())
 
     st.write("**Vector Store**")
     st.caption("FAISS")
@@ -764,7 +767,7 @@ else:
                     answer = st.write_stream(query_result.stream)
                 except Exception as e:
                     log_exception(correlation_id, ErrorCategory.PROVIDER.value, e)
-                    st.error(f"{user_message(e)} Reference: {correlation_id}.")
+                    st.error(f"{provider_guidance(e)} Reference: {correlation_id}.")
                     st.stop()
 
                 st.session_state.last_citations = query_result.citations
