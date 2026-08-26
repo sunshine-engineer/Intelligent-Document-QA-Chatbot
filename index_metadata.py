@@ -10,6 +10,7 @@ METADATA_FILE = "vector_store/index_metadata.json"
 INDEX_MANIFEST_FILE = "vector_store/index_manifest.json"
 INDEX_SCHEMA_VERSION = 1
 INDEX_ARTIFACTS = ("index.faiss", "index.pkl")
+SNAPSHOT_FILE = "index_snapshot.json"
 DOCUMENT_MANIFEST_SCHEMA_VERSION = 1
 METRICS_SCHEMA_VERSION = 1
 
@@ -77,14 +78,12 @@ def compare_document_manifests(previous, current):
     }
 
 
-def build_index_metrics(vectors, document_manifest):
+def build_index_metrics(chunks, document_manifest, indexed_at=None):
 
     per_document_chunk_counts: dict[str, int] = {}
-    index_to_docstore_id = getattr(vectors, "index_to_docstore_id", {})
-
-    for document_id in index_to_docstore_id.values():
-        document = vectors.docstore.search(document_id)
-        source = document.metadata.get("source", "") if document else ""
+    for document in chunks:
+        metadata = getattr(document, "metadata", {}) or {}
+        source = metadata.get("source", "")
         source_name = os.path.basename(source).replace(os.sep, "/")
         per_document_chunk_counts[source_name] = (
             per_document_chunk_counts.get(source_name, 0) + 1
@@ -99,9 +98,9 @@ def build_index_metrics(vectors, document_manifest):
     return {
         "schema_version": METRICS_SCHEMA_VERSION,
         "document_count": len(documents),
-        "chunk_count": len(index_to_docstore_id),
+        "chunk_count": sum(per_document_chunk_counts.values()),
         "per_document_chunk_counts": per_document_chunk_counts,
-        "indexed_at": datetime.now(timezone.utc).isoformat(),
+        "indexed_at": indexed_at or datetime.now(timezone.utc).isoformat(),
     }
 
 
@@ -164,6 +163,87 @@ def build_index_manifest(
     }
 
 
+def _snapshot_path(index_directory):
+    return Path(index_directory) / SNAPSHOT_FILE
+
+
+def load_index_snapshot(index_directory):
+    try:
+        with open(_snapshot_path(index_directory), encoding="utf-8") as file_handle:
+            return json.load(file_handle)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _write_json(path, payload):
+    with open(path, "w", encoding="utf-8") as file_handle:
+        json.dump(payload, file_handle, indent=2)
+        file_handle.write("\n")
+
+
+def build_index_snapshot(
+    index_directory,
+    embedding_provider,
+    embedding_model,
+    vector_dimension,
+    document_manifest,
+    chunks,
+    indexed_at=None,
+):
+    metrics = build_index_metrics(chunks, document_manifest, indexed_at)
+    snapshot = build_index_manifest(
+        index_directory, embedding_provider, embedding_model, vector_dimension
+    )
+    snapshot.update(
+        {
+            "snapshot_schema_version": 1,
+            "pdf_state": hashlib.sha256(
+                json.dumps(document_manifest, sort_keys=True).encode()
+            ).hexdigest(),
+            "document_manifest": document_manifest,
+            "metrics": metrics,
+        }
+    )
+    return snapshot
+
+
+def verify_index_snapshot(index_directory, embedding_provider, embedding_model):
+    snapshot = load_index_snapshot(index_directory)
+    if not isinstance(snapshot, dict) or snapshot.get("snapshot_schema_version") != 1:
+        return False
+    if not is_valid_index_metrics(snapshot.get("metrics")):
+        return False
+    documents = snapshot.get("document_manifest", {}).get("documents")
+    if not isinstance(documents, dict):
+        return False
+    return _verify_manifest(
+        index_directory, embedding_provider, embedding_model, snapshot
+    )
+
+
+def _verify_manifest(index_directory, embedding_provider, embedding_model, manifest):
+    if manifest.get("schema_version") != INDEX_SCHEMA_VERSION:
+        return False
+    if manifest.get("embedding_provider") != embedding_provider:
+        return False
+    if manifest.get("embedding_model") != embedding_model:
+        return False
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return False
+    index_path = Path(index_directory)
+    for artifact_name in INDEX_ARTIFACTS:
+        artifact_metadata = artifacts.get(artifact_name)
+        artifact_path = index_path / artifact_name
+        if not isinstance(artifact_metadata, dict) or not artifact_path.is_file():
+            return False
+        if artifact_metadata.get("size") != artifact_path.stat().st_size:
+            return False
+        if artifact_metadata.get("sha256") != _sha256_file(artifact_path):
+            return False
+    return True
+
+
 def save_index_manifest(manifest):
 
     manifest_path = Path(INDEX_MANIFEST_FILE)
@@ -192,40 +272,68 @@ def verify_index_manifest(
     embedding_model,
 ):
 
+    snapshot = load_index_snapshot(index_directory)
+    if isinstance(snapshot, dict):
+        return verify_index_snapshot(
+            index_directory, embedding_provider, embedding_model
+        )
     manifest = load_index_manifest()
 
     if not isinstance(manifest, dict):
         return False
 
-    if manifest.get("schema_version") != INDEX_SCHEMA_VERSION:
-        return False
+    return _verify_manifest(
+        index_directory, embedding_provider, embedding_model, manifest
+    )
 
-    if manifest.get("embedding_provider") != embedding_provider:
-        return False
 
-    if manifest.get("embedding_model") != embedding_model:
-        return False
-
-    artifacts = manifest.get("artifacts")
-    if not isinstance(artifacts, dict):
-        return False
-
+def save_index_snapshot_atomically(
+    vectors,
+    index_directory,
+    embedding_provider,
+    embedding_model,
+    document_manifest,
+    chunks,
+):
+    """Replace the complete persisted generation only after it verifies."""
     index_path = Path(index_directory)
-
-    for artifact_name in INDEX_ARTIFACTS:
-        artifact_metadata = artifacts.get(artifact_name)
-        artifact_path = index_path / artifact_name
-
-        if not isinstance(artifact_metadata, dict) or not artifact_path.is_file():
-            return False
-
-        if artifact_metadata.get("size") != artifact_path.stat().st_size:
-            return False
-
-        if artifact_metadata.get("sha256") != _sha256_file(artifact_path):
-            return False
-
-    return True
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = Path(
+        tempfile.mkdtemp(prefix=f".{index_path.name}.", dir=index_path.parent)
+    )
+    backup_path = index_path.with_name(f".{index_path.name}.backup")
+    try:
+        vectors.save_local(str(temporary_path))
+        snapshot = build_index_snapshot(
+            temporary_path,
+            embedding_provider,
+            embedding_model,
+            getattr(vectors.index, "d", None),
+            document_manifest,
+            chunks,
+        )
+        _write_json(temporary_path / SNAPSHOT_FILE, snapshot)
+        if not verify_index_snapshot(
+            temporary_path, embedding_provider, embedding_model
+        ):
+            raise ValueError("Staged index snapshot verification failed")
+        if backup_path.exists():
+            shutil.rmtree(backup_path)
+        if index_path.exists():
+            os.replace(index_path, backup_path)
+        os.replace(temporary_path, index_path)
+        if backup_path.exists():
+            shutil.rmtree(backup_path)
+        return snapshot
+    except Exception:
+        if index_path.exists() and backup_path.exists():
+            shutil.rmtree(index_path)
+        if backup_path.exists() and not index_path.exists():
+            os.replace(backup_path, index_path)
+        raise
+    finally:
+        if temporary_path.exists():
+            shutil.rmtree(temporary_path)
 
 
 def save_faiss_index_atomically(vectors, index_directory):

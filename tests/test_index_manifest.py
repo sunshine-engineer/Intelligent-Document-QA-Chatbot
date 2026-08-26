@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import index_metadata
 
@@ -13,6 +14,10 @@ class FakeVectors:
         path = Path(directory)
         (path / "index.faiss").write_bytes(self.content)
         (path / "index.pkl").write_bytes(self.content)
+
+    @property
+    def index(self):
+        return type("Index", (), {"d": 3})()
 
 
 class FailingVectors:
@@ -125,6 +130,42 @@ class IndexManifestTests(unittest.TestCase):
                 )
 
             self.assertEqual((index_directory / "index.faiss").read_bytes(), b"old")
+
+    def test_snapshot_round_trip_and_metadata_write_failure_preserves_previous(self):
+        with tempfile.TemporaryDirectory() as directory:
+            index_directory = Path(directory) / "faiss_index"
+            manifest = {"documents": {"paper.pdf": {"status": "indexed"}}}
+            chunks = [type("Chunk", (), {"metadata": {"source": "paper.pdf"}})()]
+            first = index_metadata.save_index_snapshot_atomically(
+                FakeVectors(b"old"),
+                index_directory,
+                "ollama",
+                "model",
+                manifest,
+                chunks,
+            )
+            self.assertTrue(
+                index_metadata.verify_index_snapshot(index_directory, "ollama", "model")
+            )
+            self.assertEqual(
+                index_metadata.load_index_snapshot(index_directory)["metrics"],
+                first["metrics"],
+            )
+
+            with patch("index_metadata._write_json", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    index_metadata.save_index_snapshot_atomically(
+                        FakeVectors(b"new"),
+                        index_directory,
+                        "ollama",
+                        "model",
+                        manifest,
+                        chunks,
+                    )
+            self.assertEqual((index_directory / "index.faiss").read_bytes(), b"old")
+            self.assertTrue(
+                index_metadata.verify_index_snapshot(index_directory, "ollama", "model")
+            )
             self.assertEqual((index_directory / "index.pkl").read_bytes(), b"old")
 
     def test_discard_persisted_index_removes_generated_artifacts(self):

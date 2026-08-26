@@ -15,6 +15,7 @@ from index_metadata import (
     get_pdf_state,
     is_valid_index_metrics,
     load_index_manifest,
+    load_index_snapshot,
     load_metadata,
     save_faiss_index_atomically,
     save_index_manifest,
@@ -343,7 +344,7 @@ pdf_files = get_pdf_files(PDF_DIRECTORY)
 current_document_manifest = get_document_manifest(PDF_DIRECTORY)
 
 try:
-    saved = load_metadata()
+    saved = load_index_snapshot(FAISS_INDEX_PATH)
 except (OSError, JSONDecodeError):
     saved = None
 

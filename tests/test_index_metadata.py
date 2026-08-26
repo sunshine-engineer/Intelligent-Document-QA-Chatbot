@@ -95,10 +95,12 @@ class PdfStateTests(unittest.TestCase):
             )
 
     def test_metrics_persist_document_and_chunk_counts(self):
-        metrics = build_index_metrics(
-            FakeVectors(),
-            {"documents": {"a.pdf": {}, "b.pdf": {}}},
-        )
+        chunks = [
+            type("Document", (), {"metadata": {"source": "a.pdf"}})(),
+            type("Document", (), {"metadata": {"source": "a.pdf"}})(),
+            type("Document", (), {"metadata": {"source": "b.pdf"}})(),
+        ]
+        metrics = build_index_metrics(chunks, {"documents": {"a.pdf": {}, "b.pdf": {}}})
 
         self.assertEqual(metrics["document_count"], 2)
         self.assertEqual(metrics["chunk_count"], 3)
