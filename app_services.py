@@ -5,20 +5,13 @@ the UI module.  Dependencies are injectable so lifecycle behavior can be
 tested without starting Streamlit or Ollama.
 """
 
-import os
 from dataclasses import dataclass
 from typing import Any, Callable
 
 from index_metadata import (
-    build_index_manifest,
-    build_index_metrics,
     get_document_manifest,
-    get_pdf_state,
-    load_index_manifest,
-    load_metadata,
-    save_faiss_index_atomically,
-    save_index_manifest,
-    save_metadata,
+    load_index_snapshot,
+    save_index_snapshot_atomically,
     verify_index_manifest,
     is_valid_index_metrics,
 )
@@ -85,14 +78,13 @@ class IndexService:
             self.embedding_factory(),
             allow_dangerous_deserialization=True,
         )
-        manifest = load_index_manifest()
+        manifest = load_index_snapshot(self.config.index_directory)
         if not isinstance(manifest, dict):
             raise ValueError("Saved FAISS index manifest is unavailable")
         if manifest.get("vector_dimension") != getattr(vectors.index, "d", None):
             raise ValueError("Saved FAISS index dimension verification failed")
 
-        metadata = load_metadata() or {}
-        metrics = metadata.get("metrics")
+        metrics = manifest.get("metrics")
         if not is_valid_index_metrics(metrics):
             raise ValueError("Saved index metrics are unavailable")
         assert isinstance(metrics, dict)
@@ -111,7 +103,10 @@ class IndexService:
     ) -> tuple[Any, dict, list, list]:
         correlation_id = new_correlation_id()
         started_at = time.perf_counter()
-        incremental = bool(document_changes) and existing_vectors is not None
+        # A persisted snapshot must contain metrics for the complete chunk set.
+        # Rebuild the affected generation from explicit chunk records rather
+        # than reading FAISS's private document-store mappings.
+        incremental = False
         log_event(
             logging.INFO,
             "index_build_started",
@@ -129,29 +124,8 @@ class IndexService:
             pages=len(docs),
         )
         splitter = self.splitter_factory()
-        vectors = existing_vectors
+        vectors = None
         documents_to_embed = docs
-
-        if incremental:
-            assert document_changes is not None
-            assert vectors is not None
-            added_or_changed = set(document_changes["added"]) | set(
-                document_changes["changed"]
-            )
-            removed = set(document_changes["removed"])
-            documents_to_remove = []
-            for doc_id in vectors.index_to_docstore_id.values():
-                document = vectors.docstore.search(doc_id)
-                source = os.path.basename(document.metadata.get("source", ""))
-                if source in added_or_changed or source in removed:
-                    documents_to_remove.append(doc_id)
-            if documents_to_remove:
-                vectors.delete(documents_to_remove)
-            documents_to_embed = [
-                doc
-                for doc in docs
-                if os.path.basename(doc.metadata.get("source", "")) in added_or_changed
-            ]
 
         final_documents = splitter.split_documents(documents_to_embed)
         log_event(
@@ -174,22 +148,18 @@ class IndexService:
         elif final_documents:
             vectors.add_documents(final_documents)
 
-        save_faiss_index_atomically(vectors, self.config.index_directory)
         document_manifest = get_document_manifest(self.config.pdf_directory)
         for document in document_manifest["documents"].values():
             document["status"] = "indexed"
-        metrics = build_index_metrics(vectors, document_manifest)
-        save_index_manifest(
-            build_index_manifest(
-                self.config.index_directory,
-                self.config.embedding_provider,
-                self.config.embedding_model,
-                getattr(vectors.index, "d", None),
-            )
+        snapshot = save_index_snapshot_atomically(
+            vectors,
+            self.config.index_directory,
+            self.config.embedding_provider,
+            self.config.embedding_model,
+            document_manifest,
+            final_documents,
         )
-        save_metadata(
-            get_pdf_state(self.config.pdf_directory), document_manifest, metrics
-        )
+        metrics = snapshot["metrics"]
         log_event(
             logging.INFO,
             "index_build_completed",
