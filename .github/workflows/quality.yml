@@ -32,8 +32,10 @@ jobs:
         run: uv run mypy
       - name: Test with coverage gate
         run: >-
-          uv run pytest --cov --cov-report=term-missing
+          uv run python -m pytest --cov --cov-report=term-missing
           --cov-report=xml:coverage.xml
+      - name: Smoke-test Streamlit startup without providers
+        run: uv run python scripts/streamlit_smoke.py
       - name: Run deterministic offline retrieval evaluation
         run: >-
           uv run python evaluation/run_offline.py
@@ -47,7 +49,11 @@ jobs:
             evaluation-results.json
 
   live-provider-smoke:
-    if: ${{ vars.RUN_LIVE_PROVIDER_CHECKS == 'true' && secrets.GROQ_API_KEY != '' && secrets.OLLAMA_SMOKE_URL != '' }}
+    # Secrets are intentionally not referenced in a job-level condition: GitHub
+    # Actions does not support that context there and otherwise creates no jobs.
+    # The repository variable is the explicit opt-in; the script validates that
+    # the required secrets are present without ever printing them.
+    if: ${{ vars.RUN_LIVE_PROVIDER_CHECKS == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,11 +61,10 @@ jobs:
         with:
           version: "0.12.5"
       - run: uv sync --all-groups --frozen
-      - name: Check configured live endpoints without logging credentials
+      - name: Exercise configured Groq and Ollama providers without logging credentials
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          OLLAMA_HOST: ${{ secrets.OLLAMA_SMOKE_URL }}
-        run: >-
-          uv run python -c "import os, urllib.request;
-          assert os.environ['GROQ_API_KEY'];
-          urllib.request.urlopen(os.environ['OLLAMA_HOST'] + '/api/tags', timeout=10)"
+          OLLAMA_SMOKE_URL: ${{ secrets.OLLAMA_SMOKE_URL }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          EMBEDDING_MODEL: ${{ vars.EMBEDDING_MODEL }}
+        run: uv run python scripts/live_provider_smoke.py
