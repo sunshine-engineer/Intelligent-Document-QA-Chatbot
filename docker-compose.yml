@@ -45,10 +45,16 @@ services:
       - .env
     environment:
       OLLAMA_HOST: http://ollama:11434
+      # Atomic FAISS persistence renames the index directory during saves.
+      # Keep the replaceable index below the bind-mount root so Linux can
+      # rename it without hitting EBUSY on the mount point itself.
+      INDEX_DIRECTORY: /app/faiss-data/index
     volumes:
       - ./research_papers:/app/research_papers
+      - ./faiss_index:/app/faiss-data
       - ./vector_store:/app/vector_store
       - ./.streamlit:/app/.streamlit
+      - ./logs:/app/logs
     healthcheck:
       test:
         - CMD-SHELL

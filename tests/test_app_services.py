@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from app_services import IndexConfig, IndexService
@@ -41,6 +42,52 @@ class AppServiceTests(unittest.TestCase):
         with patch("app_services.verify_index_manifest", return_value=False):
             with self.assertRaisesRegex(ValueError, "verification failed"):
                 service.load()
+
+    def test_incremental_changes_without_verified_vectors_use_full_rebuild(self):
+        document = SimpleNamespace(
+            metadata={"source": "docs/paper.pdf"}, page_content="content"
+        )
+        loader = Mock()
+        loader.load.return_value = [document]
+        splitter = Mock()
+        splitter.split_documents.return_value = [document]
+        vectors = Mock()
+        vectors.index.d = 3
+        service = IndexService(
+            IndexConfig("docs", "index", "ollama", "model"),
+            embedding_factory=Mock(return_value="embeddings"),
+            loader_factory=Mock(return_value=loader),
+            splitter_factory=Mock(return_value=splitter),
+            faiss_loader=Mock(),
+            faiss_factory=Mock(return_value=vectors),
+        )
+        changes = {
+            "added": ["paper.pdf"],
+            "changed": [],
+            "removed": [],
+            "unchanged": [],
+        }
+
+        with patch(
+            "app_services.save_faiss_index_atomically"
+        ), patch(
+            "app_services.get_document_manifest",
+            return_value={"documents": {"paper.pdf": {}}},
+        ), patch(
+            "app_services.build_index_metrics",
+            return_value={"document_count": 1, "chunk_count": 1},
+        ), patch(
+            "app_services.build_index_manifest", return_value={}
+        ), patch(
+            "app_services.save_index_manifest"
+        ), patch(
+            "app_services.get_pdf_state", return_value="state"
+        ), patch("app_services.save_metadata"):
+            built_vectors, _, _, chunks = service.build(changes, None)
+
+        service.faiss_factory.assert_called_once_with([document], "embeddings")
+        self.assertIs(built_vectors, vectors)
+        self.assertEqual(chunks, [document])
 
 
 if __name__ == "__main__":

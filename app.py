@@ -1,5 +1,6 @@
 import os
 import time
+import logging
 from json import JSONDecodeError
 
 import streamlit as st
@@ -32,7 +33,9 @@ from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from app_services import IndexConfig, IndexService
 from query_services import ConversationalQueryService
-from settings import Settings, provider_guidance
+from settings import Settings
+from app_errors import ErrorCategory, user_message
+from app_logging import configure_logging, log_event, log_exception, new_correlation_id
 
 # ==========================================================
 # Page Configuration
@@ -60,9 +63,14 @@ load_css()
 # ==========================================================
 
 load_dotenv()
+configure_logging()
 
 settings = Settings.from_env()
 configuration_errors = settings.validate()
+log_event(logging.INFO, "application_configuration_loaded", category="configuration",
+          llm_model=settings.llm_model, embedding_model=settings.embedding_model,
+          pdf_directory=settings.pdf_directory, index_directory=settings.index_directory,
+          default_top_k=settings.default_top_k)
 
 # ==========================================================
 # Constants
@@ -187,6 +195,7 @@ index_service = IndexService(
         chunk_overlap=settings.chunk_overlap,
     ),
     faiss_loader=FAISS.load_local,
+    faiss_factory=FAISS.from_documents,
 )
 
 def create_vector_embedding(document_changes=None):
@@ -310,6 +319,8 @@ def initialize_session_state():
 initialize_session_state()
 
 if configuration_errors:
+    log_event(logging.ERROR, "invalid_configuration", category="configuration",
+              error_count=len(configuration_errors))
     st.error("Invalid application configuration:")
     for configuration_error in configuration_errors:
         st.write(f"- {configuration_error}")
@@ -339,6 +350,7 @@ needs_rebuild = needs_rebuild or any(
 )
 
 if not pdf_files:
+    log_event(logging.INFO, "knowledge_base_empty", category="ingestion")
     st.session_state.vectors = None
     if (
         isinstance(saved, dict)
@@ -358,29 +370,44 @@ if not pdf_files:
         "Add at least one PDF to research_papers/ to build the knowledge base."
     )
 elif needs_rebuild:
+    log_event(logging.INFO, "knowledge_base_rebuild_required", category="indexing",
+              added=len(document_changes["added"]), changed=len(document_changes["changed"]),
+              removed=len(document_changes["removed"]))
 
     with st.spinner("Indexing research papers..."):
 
         try:
             if not load_vector_store(show_error=False):
                 st.session_state.vectors = None
+                log_event(
+                    logging.INFO,
+                    "verified_base_index_unavailable_full_rebuild_selected",
+                    category="indexing",
+                )
             create_vector_embedding(document_changes)
-        except Exception:
+        except Exception as error:
+            correlation_id = new_correlation_id()
+            log_exception(correlation_id, ErrorCategory.INDEXING.value, error)
             st.session_state.vectors = None
             st.session_state.startup_message = (
                 "Knowledge-base indexing failed. Check the PDF files and "
-                "embedding service, then use Refresh Knowledge Base."
+                f"embedding service, then use Refresh Knowledge Base. "
+                f"Reference: {correlation_id}."
             )
 else:
+    log_event(logging.INFO, "saved_index_reload_required", category="indexing")
     if not load_vector_store(show_error=False):
         with st.spinner("Recovering the knowledge base..."):
             try:
                 create_vector_embedding()
-            except Exception:
+            except Exception as error:
+                correlation_id = new_correlation_id()
+                log_exception(correlation_id, ErrorCategory.INDEXING.value, error)
                 st.session_state.vectors = None
                 st.session_state.startup_message = (
                     "The saved index could not be loaded or rebuilt. "
-                    "Use Refresh Knowledge Base after checking the services."
+                    "Use Refresh Knowledge Base after checking the services. "
+                    f"Reference: {correlation_id}."
                 )
 
 
@@ -581,10 +608,19 @@ def build_query_service(top_k):
             "context": documents,
         })
 
+    def stream_answer(question, history, documents):
+        chain = create_stuff_documents_chain(llm, prompt)
+        return chain.stream({
+            "input": question,
+            "history": history,
+            "context": documents,
+        })
+
     return ConversationalQueryService(
         retriever=retrieve,
         rewriter=rewrite if llm is not None else None,
         answerer=answer,
+        answer_streamer=stream_answer,
         relevance_threshold=settings.relevance_threshold,
         max_results=top_k,
     )
@@ -711,40 +747,27 @@ else:
 
             with st.spinner("Searching documents..."):
 
-                start = time.perf_counter()
+                correlation_id = new_correlation_id()
                 try:
-                    query_result = build_query_service(top_k).ask(
-                        user_prompt, history
+                    query_result = build_query_service(top_k).ask_stream(
+                        user_prompt, history, correlation_id
                     )
+                    answer = st.write_stream(query_result.stream)
                 except Exception as e:
-                    st.error(provider_guidance(e))
+                    log_exception(correlation_id, ErrorCategory.PROVIDER.value, e)
+                    st.error(
+                        f"{user_message(e)} Reference: {correlation_id}."
+                    )
                     st.stop()
                     
                 
                 st.session_state.last_citations = query_result.citations
 
-                elapsed = time.perf_counter() - start
-
-            answer = query_result.answer
-
-            # ----------------------------
-            # Streaming animation
-            # ----------------------------
-
-            placeholder = st.empty()
-
-            text = ""
-
-            for word in answer.split():
-
-                text += word + " "
-
-                placeholder.markdown(text)
-
-                time.sleep(0.02)
-
             st.caption(
-                f"⏱ Response Time: {elapsed:.2f} sec"
+                f"⏱ Retrieval: {query_result.timings.retrieval_latency_ms:.0f} ms · "
+                f"First token: {query_result.timings.first_token_latency_ms or 0:.0f} ms · "
+                f"Generation: {query_result.timings.generation_latency_ms:.0f} ms · "
+                f"Total: {query_result.timings.total_latency_ms:.0f} ms"
             )
 
             st.download_button(

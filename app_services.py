@@ -22,6 +22,9 @@ from index_metadata import (
     verify_index_manifest,
     is_valid_index_metrics,
 )
+import logging
+import time
+from app_logging import log_event, new_correlation_id
 
 
 @dataclass(frozen=True)
@@ -42,20 +45,35 @@ class IndexService:
         loader_factory: Callable[[str], Any],
         splitter_factory: Callable[[], Any],
         faiss_loader: Callable[..., Any],
+        faiss_factory: Callable[[list[Any], Any], Any] | None = None,
     ):
         self.config = config
         self.embedding_factory = embedding_factory
         self.loader_factory = loader_factory
         self.splitter_factory = splitter_factory
         self.faiss_loader = faiss_loader
+        self.faiss_factory = faiss_factory
 
     def load(self) -> tuple[Any, dict]:
+        correlation_id = new_correlation_id()
+        log_event(logging.INFO, "index_load_started", correlation_id=correlation_id,
+                  category="indexing", index_directory=self.config.index_directory)
         if not verify_index_manifest(
             self.config.index_directory,
             self.config.embedding_provider,
             self.config.embedding_model,
         ):
-            raise ValueError("Saved FAISS index verification failed")
+            error = ValueError("Saved FAISS index verification failed")
+            log_event(
+                logging.WARNING,
+                "index_verification_failed_rebuild_required",
+                correlation_id=correlation_id,
+                category="indexing",
+                index_directory=self.config.index_directory,
+                embedding_provider=self.config.embedding_provider,
+                embedding_model=self.config.embedding_model,
+            )
+            raise error
 
         vectors = self.faiss_loader(
             self.config.index_directory,
@@ -70,15 +88,26 @@ class IndexService:
         metrics = metadata.get("metrics")
         if not is_valid_index_metrics(metrics):
             raise ValueError("Saved index metrics are unavailable")
+        log_event(logging.INFO, "index_load_completed", correlation_id=correlation_id,
+                  category="indexing", document_count=metrics["document_count"],
+                  chunk_count=metrics["chunk_count"])
         return vectors, metrics
 
     def build(self, document_changes=None, existing_vectors=None) -> tuple[Any, dict, list, list]:
+        correlation_id = new_correlation_id()
+        started_at = time.perf_counter()
+        incremental = bool(document_changes) and existing_vectors is not None
+        log_event(logging.INFO, "index_build_started", correlation_id=correlation_id,
+                  category="indexing", incremental=incremental,
+                  recovery_full_rebuild=bool(document_changes) and not incremental)
         docs = self.loader_factory(self.config.pdf_directory).load()
+        log_event(logging.INFO, "documents_loaded", correlation_id=correlation_id,
+                  category="ingestion", pages=len(docs))
         splitter = self.splitter_factory()
         vectors = existing_vectors
         documents_to_embed = docs
 
-        if document_changes:
+        if incremental:
             added_or_changed = set(document_changes["added"]) | set(
                 document_changes["changed"]
             )
@@ -98,10 +127,17 @@ class IndexService:
             ]
 
         final_documents = splitter.split_documents(documents_to_embed)
+        log_event(logging.INFO, "documents_chunked", correlation_id=correlation_id,
+                  category="ingestion", chunks=len(final_documents))
         if vectors is None:
-            # Import lazily so unit tests can inject a fake FAISS implementation.
-            from langchain_community.vectorstores import FAISS
-            vectors = FAISS.from_documents(final_documents, self.embedding_factory())
+            if self.faiss_factory is None:
+                # Backward-compatible lazy default for non-Streamlit callers.
+                from langchain_community.vectorstores import FAISS
+
+                factory = FAISS.from_documents
+            else:
+                factory = self.faiss_factory
+            vectors = factory(final_documents, self.embedding_factory())
         elif final_documents:
             vectors.add_documents(final_documents)
 
@@ -117,4 +153,8 @@ class IndexService:
             getattr(vectors.index, "d", None),
         ))
         save_metadata(get_pdf_state(self.config.pdf_directory), document_manifest, metrics)
+        log_event(logging.INFO, "index_build_completed", correlation_id=correlation_id,
+                  category="indexing", document_count=metrics["document_count"],
+                  chunk_count=metrics["chunk_count"],
+                  latency_ms=round((time.perf_counter() - started_at) * 1000, 2))
         return vectors, metrics, docs, final_documents

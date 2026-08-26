@@ -11,9 +11,11 @@ docker compose up --build
 ```
 
 The application is available at <http://localhost:8501>. Add PDFs under
-`research_papers/`; the directory and `vector_store/` are bind-mounted so
-rebuilds do not remove documents or indexes. Ollama data is kept in the named
-`ollama-data` volume.
+`research_papers/`; the directory, `vector_store/`, and `faiss_index/` are
+bind-mounted so rebuilds do not remove documents or indexes. Inside the
+container, the replaceable FAISS directory is `/app/faiss-data/index`, below
+the bind-mount root, which allows atomic directory replacement. Ollama data is
+kept in the named `ollama-data` volume.
 
 The Dev Container combines the canonical stack with
 `docker-compose.devcontainer.yml`, which adds only the workspace bind mount.
