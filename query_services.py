@@ -7,7 +7,6 @@ import logging
 
 from app_logging import log_event, new_correlation_id
 
-
 REFUSAL_RESPONSE = "I couldn't find that information in the uploaded documents."
 
 
@@ -65,17 +64,29 @@ class ConversationalQueryService:
         self.relevance_threshold = relevance_threshold
         self.max_results = max_results
 
-    def ask(self, question: str, history: str = "", correlation_id: str | None = None) -> QueryResult:
+    def ask(
+        self, question: str, history: str = "", correlation_id: str | None = None
+    ) -> QueryResult:
         correlation_id = correlation_id or new_correlation_id()
         started_at = time.perf_counter()
-        log_event(logging.INFO, "query_started", correlation_id=correlation_id,
-                  category="retrieval", history_present=bool(history.strip()),
-                  question_length=len(question))
+        log_event(
+            logging.INFO,
+            "query_started",
+            correlation_id=correlation_id,
+            category="retrieval",
+            history_present=bool(history.strip()),
+            question_length=len(question),
+        )
         retrieval_query = question
         if history.strip() and self.rewriter is not None:
             retrieval_query = self.rewriter(history, question).strip() or question
-            log_event(logging.INFO, "query_rewritten", correlation_id=correlation_id,
-                      category="retrieval", query_length=len(retrieval_query))
+            log_event(
+                logging.INFO,
+                "query_rewritten",
+                correlation_id=correlation_id,
+                category="retrieval",
+                query_length=len(retrieval_query),
+            )
 
         retrieval_started_at = time.perf_counter()
         retrieved = []
@@ -85,7 +96,9 @@ class ConversationalQueryService:
                 continue
             metadata = getattr(document, "metadata", {}) or {}
             content = getattr(document, "page_content", "")
-            chunk_id = str(metadata.get("chunk_id") or self._fallback_chunk_id(metadata, content))
+            chunk_id = str(
+                metadata.get("chunk_id") or self._fallback_chunk_id(metadata, content)
+            )
             if chunk_id in seen:
                 continue
             seen.add(chunk_id)
@@ -94,9 +107,14 @@ class ConversationalQueryService:
                 break
 
         retrieval_latency_ms = (time.perf_counter() - retrieval_started_at) * 1000
-        log_event(logging.INFO, "retrieval_completed", correlation_id=correlation_id,
-                  category="retrieval", candidates=len(retrieved),
-                  latency_ms=round(retrieval_latency_ms, 2))
+        log_event(
+            logging.INFO,
+            "retrieval_completed",
+            correlation_id=correlation_id,
+            category="retrieval",
+            candidates=len(retrieved),
+            latency_ms=round(retrieval_latency_ms, 2),
+        )
         citations = tuple(
             CitationRecord(
                 document=str(item.metadata.get("source", "Unknown")),
@@ -109,23 +127,42 @@ class ConversationalQueryService:
         )
         if not retrieved:
             total = (time.perf_counter() - started_at) * 1000
-            log_event(logging.INFO, "query_refused_no_evidence", correlation_id=correlation_id,
-                      category="retrieval", latency_ms=round(total, 2))
+            log_event(
+                logging.INFO,
+                "query_refused_no_evidence",
+                correlation_id=correlation_id,
+                category="retrieval",
+                latency_ms=round(total, 2),
+            )
             return QueryResult(
-                REFUSAL_RESPONSE, retrieval_query, citations,
-                retrieval_latency_ms, 0.0, total,
+                REFUSAL_RESPONSE,
+                retrieval_query,
+                citations,
+                retrieval_latency_ms,
+                0.0,
+                total,
             )
 
         generation_started_at = time.perf_counter()
         answer = self.answerer(question, history, [item for item, _, _ in retrieved])
         generation_latency_ms = (time.perf_counter() - generation_started_at) * 1000
         total = (time.perf_counter() - started_at) * 1000
-        log_event(logging.INFO, "generation_completed", correlation_id=correlation_id,
-                  category="provider", answer_length=len(answer),
-                  latency_ms=round(generation_latency_ms, 2), total_ms=round(total, 2))
+        log_event(
+            logging.INFO,
+            "generation_completed",
+            correlation_id=correlation_id,
+            category="provider",
+            answer_length=len(answer),
+            latency_ms=round(generation_latency_ms, 2),
+            total_ms=round(total, 2),
+        )
         return QueryResult(
-            answer, retrieval_query, citations,
-            retrieval_latency_ms, generation_latency_ms, total,
+            answer,
+            retrieval_query,
+            citations,
+            retrieval_latency_ms,
+            generation_latency_ms,
+            total,
         )
 
     def ask_stream(
@@ -136,15 +173,17 @@ class ConversationalQueryService:
     ) -> StreamingQueryResult:
         if self.answer_streamer is None:
             raise RuntimeError("Provider streaming is not configured")
+        streamer = self.answer_streamer
 
         correlation_id = correlation_id or new_correlation_id()
         started_at = time.perf_counter()
-        retrieval_query, retrieved, citations, retrieval_latency_ms = (
-            self._retrieve(question, history, correlation_id)
+        retrieval_query, retrieved, citations, retrieval_latency_ms = self._retrieve(
+            question, history, correlation_id
         )
         timings = StreamTimings(retrieval_latency_ms=retrieval_latency_ms)
 
         if not retrieved:
+
             def refusal_stream():
                 timings.first_token_latency_ms = (
                     time.perf_counter() - started_at
@@ -162,8 +201,12 @@ class ConversationalQueryService:
             generation_started_at = time.perf_counter()
             failed = False
             try:
-                for chunk in self.answer_streamer(question, history, documents):
-                    text = chunk if isinstance(chunk, str) else getattr(chunk, "content", "")
+                for chunk in streamer(question, history, documents):
+                    text = (
+                        chunk
+                        if isinstance(chunk, str)
+                        else getattr(chunk, "content", "")
+                    )
                     if not text:
                         continue
                     if timings.first_token_latency_ms is None:
@@ -213,8 +256,7 @@ class ConversationalQueryService:
             metadata = getattr(document, "metadata", {}) or {}
             content = getattr(document, "page_content", "")
             chunk_id = str(
-                metadata.get("chunk_id")
-                or self._fallback_chunk_id(metadata, content)
+                metadata.get("chunk_id") or self._fallback_chunk_id(metadata, content)
             )
             if chunk_id in seen:
                 continue

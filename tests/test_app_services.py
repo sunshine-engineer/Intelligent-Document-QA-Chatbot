@@ -24,10 +24,14 @@ class AppServiceTests(unittest.TestCase):
             faiss_loader=Mock(return_value=vectors),
         )
 
-        with patch("app_services.verify_index_manifest", return_value=True), \
-                patch("app_services.load_index_manifest", return_value={"vector_dimension": 3}), \
-                patch("app_services.load_metadata", return_value={"metrics": metrics}), \
-                patch("app_services.is_valid_index_metrics", return_value=True):
+        with (
+            patch("app_services.verify_index_manifest", return_value=True),
+            patch(
+                "app_services.load_index_manifest", return_value={"vector_dimension": 3}
+            ),
+            patch("app_services.load_metadata", return_value={"metrics": metrics}),
+            patch("app_services.is_valid_index_metrics", return_value=True),
+        ):
             loaded_vectors, loaded_metrics = service.load()
 
         self.assertIs(loaded_vectors, vectors)
@@ -36,7 +40,10 @@ class AppServiceTests(unittest.TestCase):
     def test_load_rejects_unverified_index(self):
         service = IndexService(
             IndexConfig("docs", "index", "ollama", "model"),
-            Mock(), Mock(), Mock(), Mock(),
+            Mock(),
+            Mock(),
+            Mock(),
+            Mock(),
         )
 
         with patch("app_services.verify_index_manifest", return_value=False):
@@ -68,21 +75,21 @@ class AppServiceTests(unittest.TestCase):
             "unchanged": [],
         }
 
-        with patch(
-            "app_services.save_faiss_index_atomically"
-        ), patch(
-            "app_services.get_document_manifest",
-            return_value={"documents": {"paper.pdf": {}}},
-        ), patch(
-            "app_services.build_index_metrics",
-            return_value={"document_count": 1, "chunk_count": 1},
-        ), patch(
-            "app_services.build_index_manifest", return_value={}
-        ), patch(
-            "app_services.save_index_manifest"
-        ), patch(
-            "app_services.get_pdf_state", return_value="state"
-        ), patch("app_services.save_metadata"):
+        with (
+            patch("app_services.save_faiss_index_atomically"),
+            patch(
+                "app_services.get_document_manifest",
+                return_value={"documents": {"paper.pdf": {}}},
+            ),
+            patch(
+                "app_services.build_index_metrics",
+                return_value={"document_count": 1, "chunk_count": 1},
+            ),
+            patch("app_services.build_index_manifest", return_value={}),
+            patch("app_services.save_index_manifest"),
+            patch("app_services.get_pdf_state", return_value="state"),
+            patch("app_services.save_metadata"),
+        ):
             built_vectors, _, _, chunks = service.build(changes, None)
 
         service.faiss_factory.assert_called_once_with([document], "embeddings")

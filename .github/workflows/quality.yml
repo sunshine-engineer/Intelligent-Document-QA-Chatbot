@@ -1,0 +1,65 @@
+name: Quality gates
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.5"
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --all-groups --frozen
+      - name: Check formatting
+        run: uv run black --check .
+      - name: Lint
+        run: uv run ruff check .
+      - name: Type check core modules
+        run: uv run mypy
+      - name: Test with coverage gate
+        run: >-
+          uv run pytest --cov --cov-report=term-missing
+          --cov-report=xml:coverage.xml
+      - name: Run deterministic offline retrieval evaluation
+        run: >-
+          uv run python evaluation/run_offline.py
+          --output evaluation-results.json
+      - name: Upload quality evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-evidence
+          path: |
+            coverage.xml
+            evaluation-results.json
+
+  live-provider-smoke:
+    if: ${{ vars.RUN_LIVE_PROVIDER_CHECKS == 'true' && secrets.GROQ_API_KEY != '' && secrets.OLLAMA_SMOKE_URL != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.12.5"
+      - run: uv sync --all-groups --frozen
+      - name: Check configured live endpoints without logging credentials
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          OLLAMA_HOST: ${{ secrets.OLLAMA_SMOKE_URL }}
+        run: >-
+          uv run python -c "import os, urllib.request;
+          assert os.environ['GROQ_API_KEY'];
+          urllib.request.urlopen(os.environ['OLLAMA_HOST'] + '/api/tags', timeout=10)"

@@ -79,7 +79,7 @@ def compare_document_manifests(previous, current):
 
 def build_index_metrics(vectors, document_manifest):
 
-    per_document_chunk_counts = {}
+    per_document_chunk_counts: dict[str, int] = {}
     index_to_docstore_id = getattr(vectors, "index_to_docstore_id", {})
 
     for document_id in index_to_docstore_id.values():

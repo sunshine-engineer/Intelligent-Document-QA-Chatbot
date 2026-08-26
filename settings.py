@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 from typing import Mapping
 
-
 DEFAULT_GROQ_MODEL = "openai/gpt-oss-20b"
 DEFAULT_EMBEDDING_MODEL = "nomic-embed-text:latest"
 
@@ -38,9 +37,7 @@ class Settings:
             chunk_overlap=int(env.get("CHUNK_OVERLAP", "200")),
             default_top_k=int(env.get("DEFAULT_TOP_K", "4")),
             max_top_k=int(env.get("MAX_TOP_K", "10")),
-            relevance_threshold=float(
-                env.get("RETRIEVAL_RELEVANCE_THRESHOLD", "0.35")
-            ),
+            relevance_threshold=float(env.get("RETRIEVAL_RELEVANCE_THRESHOLD", "0.35")),
         )
 
     def validate(self) -> list[str]:
