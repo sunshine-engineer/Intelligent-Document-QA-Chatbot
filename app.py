@@ -6,33 +6,20 @@ from json import JSONDecodeError
 import streamlit as st
 from dotenv import load_dotenv
 from index_metadata import (
-    build_index_manifest,
-    build_index_metrics,
     compare_document_manifests,
     discard_persisted_index,
     get_pdf_files,
     get_document_manifest,
     get_pdf_state,
-    is_valid_index_metrics,
-    load_index_manifest,
     load_index_snapshot,
-    load_metadata,
-    save_faiss_index_atomically,
-    save_index_manifest,
     save_metadata,
-    verify_index_manifest,
 )
-from langchain_community.vectorstores import FAISS
-from langchain_groq import ChatGroq
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_classic.chains.combine_documents import (
-    create_stuff_documents_chain,
+from app_composition import (
+    build_index_service,
+    build_query_service,
+    create_embedding_factory,
+    create_llm,
 )
-from langchain_ollama import OllamaEmbeddings
-from langchain_community.document_loaders import PyPDFDirectoryLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from app_services import IndexConfig, IndexService
-from query_services import ConversationalQueryService
 from settings import Settings, provider_guidance
 from app_errors import ErrorCategory
 from app_logging import configure_logging, log_event, log_exception, new_correlation_id
@@ -92,14 +79,7 @@ EMBEDDING_MODEL = settings.embedding_model
 # LLM
 # ==========================================================
 
-llm = (
-    ChatGroq(
-        groq_api_key=settings.groq_api_key,
-        model=settings.llm_model,
-    )
-    if settings.groq_api_key
-    else None
-)
+llm = create_llm(settings)
 
 # ==========================================================
 # Load Existing FAISS Index
@@ -120,55 +100,6 @@ def load_vector_store(show_error=True):
         st.session_state.index_metrics = None
         return False
 
-    if not verify_index_manifest(
-        FAISS_INDEX_PATH,
-        EMBEDDING_PROVIDER,
-        EMBEDDING_MODEL,
-    ):
-        if show_error:
-            st.error("Saved FAISS index verification failed. Rebuild the index.")
-        return False
-
-    embeddings = get_embedding_model()
-
-    if not os.path.exists(FAISS_INDEX_PATH):
-        return False
-
-    try:
-
-        st.session_state.vectors = FAISS.load_local(
-            FAISS_INDEX_PATH,
-            embeddings,
-            allow_dangerous_deserialization=True,
-        )
-
-        manifest = load_index_manifest()
-        if manifest and manifest.get("vector_dimension") != getattr(
-            st.session_state.vectors.index, "d", None
-        ):
-            st.session_state.vectors = None
-            if show_error:
-                st.error("Saved FAISS index dimension verification failed.")
-            return False
-
-        metadata = load_metadata()
-        metrics = metadata.get("metrics") if isinstance(metadata, dict) else None
-        if not is_valid_index_metrics(metrics):
-            if show_error:
-                st.error("Saved index metrics are unavailable. Rebuild the index.")
-            st.session_state.index_metrics = None
-            return False
-        st.session_state.index_metrics = metrics
-
-        return True
-
-    except Exception:
-
-        if show_error:
-            st.error("Saved FAISS index could not be loaded. Rebuild the index.")
-
-    return False
-
 
 # ==========================================================
 # Embedding Model
@@ -179,10 +110,7 @@ def get_embedding_model():
 
     if st.session_state.embeddings is None:
 
-        st.session_state.embeddings = OllamaEmbeddings(
-            model=settings.embedding_model,
-            base_url=settings.ollama_url,
-        )
+        st.session_state.embeddings = create_embedding_factory(settings)()
 
     return st.session_state.embeddings
 
@@ -191,22 +119,7 @@ def get_embedding_model():
 # Build Embeddings
 # ==========================================================
 
-index_service = IndexService(
-    IndexConfig(
-        pdf_directory=PDF_DIRECTORY,
-        index_directory=FAISS_INDEX_PATH,
-        embedding_provider=EMBEDDING_PROVIDER,
-        embedding_model=EMBEDDING_MODEL,
-    ),
-    embedding_factory=get_embedding_model,
-    loader_factory=PyPDFDirectoryLoader,
-    splitter_factory=lambda: RecursiveCharacterTextSplitter(
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
-    ),
-    faiss_loader=FAISS.load_local,
-    faiss_factory=FAISS.from_documents,
-)
+index_service = build_index_service(settings, get_embedding_model)
 
 
 def create_vector_embedding(document_changes=None):
@@ -224,83 +137,6 @@ def create_vector_embedding(document_changes=None):
         return True
     except Exception:
         raise
-
-    embeddings = get_embedding_model()
-
-    loader = PyPDFDirectoryLoader(PDF_DIRECTORY)
-
-    docs = loader.load()
-
-    if not docs:
-        st.session_state.docs = []
-        st.session_state.final_documents = []
-        st.session_state.vectors = None
-        return False
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=settings.chunk_size,
-        chunk_overlap=settings.chunk_overlap,
-    )
-
-    vectors = st.session_state.vectors
-    documents_to_embed = docs
-
-    if document_changes and vectors is not None:
-        changed_paths = set(document_changes["added"]) | set(
-            document_changes["changed"]
-        )
-        removed_paths = set(document_changes["removed"])
-        ids_to_delete = []
-
-        for document_id in vectors.index_to_docstore_id.values():
-            document = vectors.docstore.search(document_id)
-            source = document.metadata.get("source", "") if document else ""
-            source_name = os.path.basename(source)
-            if source_name in changed_paths or source_name in removed_paths:
-                ids_to_delete.append(document_id)
-
-        if ids_to_delete:
-            vectors.delete(ids_to_delete)
-
-        documents_to_embed = [
-            document
-            for document in docs
-            if os.path.basename(document.metadata.get("source", "")) in changed_paths
-        ]
-    else:
-        vectors = None
-
-    final_documents = splitter.split_documents(documents_to_embed)
-
-    if vectors is None:
-        vectors = FAISS.from_documents(final_documents, embeddings)
-    elif final_documents:
-        vectors.add_documents(final_documents)
-
-    save_faiss_index_atomically(vectors, FAISS_INDEX_PATH)
-    document_manifest = get_document_manifest(PDF_DIRECTORY)
-    for document in document_manifest["documents"].values():
-        document["status"] = "indexed"
-    metrics = build_index_metrics(vectors, document_manifest)
-    save_index_manifest(
-        build_index_manifest(
-            FAISS_INDEX_PATH,
-            EMBEDDING_PROVIDER,
-            EMBEDDING_MODEL,
-            getattr(vectors.index, "d", None),
-        )
-    )
-    save_metadata(
-        get_pdf_state(PDF_DIRECTORY),
-        document_manifest,
-        metrics,
-    )
-
-    st.session_state.docs = docs
-    st.session_state.final_documents = final_documents
-    st.session_state.vectors = vectors
-    st.session_state.startup_message = None
-    return True
 
 
 # ==========================================================
@@ -561,85 +397,6 @@ def build_chat_history():
 # Prompt
 # ==========================================================
 
-prompt = ChatPromptTemplate.from_template("""
-You are a helpful AI Research Assistant.
-
-Use ONLY the retrieved context to answer the question.
-
-If the answer is not present inside the context, say:
-
-"I couldn't find that information in the uploaded documents."
-
-Previous Conversation:
-
-{history}
-
-Retrieved Context:
-
-{context}
-
-Question:
-
-{input}
-
-Instructions:
-
-- Use only the retrieved context.
-- If information is missing, clearly say so.
-- Never make up facts.
-- Quote important values exactly.
-- format the output so that its easier to read
-- Use bullet points when appropriate.
-""")
-
-
-def build_query_service(top_k):
-    retriever = st.session_state.vectors.as_retriever(search_kwargs={"k": top_k})
-
-    def retrieve(query):
-        return retriever.vectorstore.similarity_search_with_relevance_scores(
-            query, k=top_k
-        )
-
-    def rewrite(history, question):
-        rewrite_prompt = ChatPromptTemplate.from_template(
-            "Rewrite the follow-up as a standalone search query.\n"
-            "Conversation:\n{history}\nFollow-up:\n{question}"
-        )
-        return llm.invoke(
-            rewrite_prompt.format_messages(history=history, question=question)
-        ).content
-
-    def answer(question, history, documents):
-        chain = create_stuff_documents_chain(llm, prompt)
-        return chain.invoke(
-            {
-                "input": question,
-                "history": history,
-                "context": documents,
-            }
-        )
-
-    def stream_answer(question, history, documents):
-        chain = create_stuff_documents_chain(llm, prompt)
-        return chain.stream(
-            {
-                "input": question,
-                "history": history,
-                "context": documents,
-            }
-        )
-
-    return ConversationalQueryService(
-        retriever=retrieve,
-        rewriter=rewrite if llm is not None else None,
-        answerer=answer,
-        answer_streamer=stream_answer,
-        relevance_threshold=settings.relevance_threshold,
-        max_results=top_k,
-    )
-
-
 # ==========================================================
 # Main UI
 # ==========================================================
@@ -761,9 +518,9 @@ else:
 
                 correlation_id = new_correlation_id()
                 try:
-                    query_result = build_query_service(top_k).ask_stream(
-                        user_prompt, history, correlation_id
-                    )
+                    query_result = build_query_service(
+                        st.session_state.vectors, llm, settings, top_k
+                    ).ask_stream(user_prompt, history, correlation_id)
                     answer = st.write_stream(query_result.stream)
                 except Exception as e:
                     log_exception(correlation_id, ErrorCategory.PROVIDER.value, e)
