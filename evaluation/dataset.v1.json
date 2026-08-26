@@ -32,6 +32,22 @@
       "answerable": true
     },
     {
+      "id": "standalone-with-history",
+      "history": "User: Tell me about databases.",
+      "question": "What does attention do?",
+      "expected_sources": ["attention.pdf"],
+      "expected_pages": [1],
+      "answerable": true
+    },
+    {
+      "id": "ambiguous-follow-up",
+      "history": "User: Compare two papers.",
+      "question": "It?",
+      "expected_sources": [],
+      "expected_pages": [],
+      "answerable": true
+    },
+    {
       "id": "unsupported",
       "question": "What is the capital of France?",
       "expected_sources": [],

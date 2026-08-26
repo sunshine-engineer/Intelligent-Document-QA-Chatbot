@@ -45,6 +45,30 @@ class ConversationalQueryTests(unittest.TestCase):
             service.ask("What is attention?").retrieval_query, "What is attention?"
         )
 
+    def test_topic_change_with_history_does_not_rewrite(self):
+        service = ConversationalQueryService(
+            retriever=lambda query: [(document("paper.pdf", 1, "a", query), 0.9)],
+            rewriter=lambda *_: self.fail("rewriter should not be called"),
+            answerer=lambda *_: "answer",
+        )
+        result = service.ask("What is attention?", "User: Explain databases.")
+        self.assertEqual(result.rewrite_decision, "standalone")
+        self.assertEqual(result.retrieval_query, "What is attention?")
+
+    def test_ambiguous_follow_up_clarifies_in_sync_and_streaming_modes(self):
+        service = ConversationalQueryService(
+            retriever=lambda _: self.fail("retriever should not be called"),
+            rewriter=lambda *_: self.fail("rewriter should not be called"),
+            answerer=lambda *_: self.fail("answerer should not be called"),
+            answer_streamer=lambda *_: (),
+        )
+        result = service.ask("It?", "User: Explain two papers.")
+        self.assertEqual(result.rewrite_decision, "ambiguous")
+        self.assertIn("clarify", result.answer.lower())
+        stream = service.ask_stream("It?", "User: Explain two papers.")
+        self.assertEqual(stream.rewrite_decision, "ambiguous")
+        self.assertIn("clarify", "".join(stream.stream).lower())
+
     def test_empty_or_low_score_evidence_returns_refusal(self):
         service = ConversationalQueryService(
             retriever=lambda _: [(document("paper.pdf", 0, "a", "weak"), 0.2)],

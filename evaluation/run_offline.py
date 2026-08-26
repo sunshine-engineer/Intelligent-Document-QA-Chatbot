@@ -93,6 +93,12 @@ def evaluate(dataset):
                     if case["answerable"]
                     else result.answer == REFUSAL_RESPONSE
                 ),
+                "rewrite_decision": result.rewrite_decision,
+                "clarification_correct": (
+                    "clarify" in result.answer.lower()
+                    if case["id"] == "ambiguous-follow-up"
+                    else True
+                ),
                 "latency_ms": round(latency_ms, 3),
             }
         )
@@ -106,6 +112,10 @@ def evaluate(dataset):
         "citation_correctness": sum(item["citation_correct"] for item in answerable)
         / len(answerable),
         "refusal_accuracy": sum(item["refusal_correct"] for item in outcomes)
+        / len(outcomes),
+        "clarification_accuracy": sum(
+            item["clarification_correct"] for item in outcomes
+        )
         / len(outcomes),
         "mean_latency_ms": round(
             sum(item["latency_ms"] for item in outcomes) / len(outcomes), 3

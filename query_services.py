@@ -8,6 +8,9 @@ import logging
 from app_logging import log_event, new_correlation_id
 
 REFUSAL_RESPONSE = "I couldn't find that information in the uploaded documents."
+CLARIFICATION_RESPONSE = (
+    "Please clarify what you are referring to in the earlier conversation."
+)
 
 
 @dataclass(frozen=True)
@@ -27,6 +30,7 @@ class QueryResult:
     retrieval_latency_ms: float = 0.0
     generation_latency_ms: float = 0.0
     total_latency_ms: float = 0.0
+    rewrite_decision: str = "standalone"
 
 
 @dataclass
@@ -43,6 +47,7 @@ class StreamingQueryResult:
     citations: tuple[CitationRecord, ...]
     stream: Iterator[str]
     timings: StreamTimings
+    rewrite_decision: str = "standalone"
 
 
 class ConversationalQueryService:
@@ -77,15 +82,20 @@ class ConversationalQueryService:
             history_present=bool(history.strip()),
             question_length=len(question),
         )
-        retrieval_query = question
-        if history.strip() and self.rewriter is not None:
+        rewrite_decision, retrieval_query = self._rewrite_decision(question, history)
+        log_event(
+            logging.INFO,
+            "rewrite_decision",
+            correlation_id=correlation_id,
+            category="retrieval",
+            decision=rewrite_decision,
+        )
+        if rewrite_decision == "contextual":
+            assert self.rewriter is not None
             retrieval_query = self.rewriter(history, question).strip() or question
-            log_event(
-                logging.INFO,
-                "query_rewritten",
-                correlation_id=correlation_id,
-                category="retrieval",
-                query_length=len(retrieval_query),
+        if rewrite_decision == "ambiguous":
+            return QueryResult(
+                CLARIFICATION_RESPONSE, question, (), rewrite_decision=rewrite_decision
             )
 
         retrieval_started_at = time.perf_counter()
@@ -141,6 +151,7 @@ class ConversationalQueryService:
                 retrieval_latency_ms,
                 0.0,
                 total,
+                rewrite_decision,
             )
 
         generation_started_at = time.perf_counter()
@@ -163,6 +174,7 @@ class ConversationalQueryService:
             retrieval_latency_ms,
             generation_latency_ms,
             total,
+            rewrite_decision,
         )
 
     def ask_stream(
@@ -177,9 +189,13 @@ class ConversationalQueryService:
 
         correlation_id = correlation_id or new_correlation_id()
         started_at = time.perf_counter()
-        retrieval_query, retrieved, citations, retrieval_latency_ms = self._retrieve(
-            question, history, correlation_id
-        )
+        (
+            retrieval_query,
+            retrieved,
+            citations,
+            retrieval_latency_ms,
+            rewrite_decision,
+        ) = self._retrieve(question, history, correlation_id)
         timings = StreamTimings(retrieval_latency_ms=retrieval_latency_ms)
 
         if not retrieved:
@@ -188,11 +204,15 @@ class ConversationalQueryService:
                 timings.first_token_latency_ms = (
                     time.perf_counter() - started_at
                 ) * 1000
-                yield REFUSAL_RESPONSE
+                yield (
+                    CLARIFICATION_RESPONSE
+                    if rewrite_decision == "ambiguous"
+                    else REFUSAL_RESPONSE
+                )
                 timings.total_latency_ms = (time.perf_counter() - started_at) * 1000
 
             return StreamingQueryResult(
-                retrieval_query, citations, refusal_stream(), timings
+                retrieval_query, citations, refusal_stream(), timings, rewrite_decision
             )
 
         documents = [item for item, _, _ in retrieved]
@@ -240,13 +260,23 @@ class ConversationalQueryService:
                 )
 
         return StreamingQueryResult(
-            retrieval_query, citations, provider_stream(), timings
+            retrieval_query, citations, provider_stream(), timings, rewrite_decision
         )
 
     def _retrieve(self, question, history, correlation_id):
-        retrieval_query = question
-        if history.strip() and self.rewriter is not None:
+        rewrite_decision, retrieval_query = self._rewrite_decision(question, history)
+        log_event(
+            logging.INFO,
+            "rewrite_decision",
+            correlation_id=correlation_id,
+            category="retrieval",
+            decision=rewrite_decision,
+        )
+        if rewrite_decision == "contextual":
+            assert self.rewriter is not None
             retrieval_query = self.rewriter(history, question).strip() or question
+        if rewrite_decision == "ambiguous":
+            return question, [], (), 0.0, rewrite_decision
         retrieval_started_at = time.perf_counter()
         retrieved = []
         seen = set()
@@ -283,7 +313,24 @@ class ConversationalQueryService:
             evidence_count=len(retrieved),
             latency_ms=round(retrieval_latency_ms, 2),
         )
-        return retrieval_query, retrieved, citations, retrieval_latency_ms
+        return (
+            retrieval_query,
+            retrieved,
+            citations,
+            retrieval_latency_ms,
+            rewrite_decision,
+        )
+
+    def _rewrite_decision(self, question, history):
+        if not history.strip() or self.rewriter is None:
+            return "standalone", question
+        words = question.lower().replace("?", "").split()
+        references = {"it", "this", "that", "they", "them", "those", "these"}
+        if not references.intersection(words):
+            return "standalone", question
+        if len(words) <= 2:
+            return "ambiguous", question
+        return "contextual", question
 
     @staticmethod
     def _page(metadata):
