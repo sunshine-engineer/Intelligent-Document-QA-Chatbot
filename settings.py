@@ -102,6 +102,8 @@ def provider_guidance(error: Exception) -> str:
     text = str(error).lower()
     if any(marker in text for marker in ("401", "403", "auth", "api key")):
         return "Groq authentication failed. Verify GROQ_API_KEY and restart the app."
+    if any(marker in text for marker in ("429", "rate limit", "quota")):
+        return "Provider rate limit reached. Wait before retrying or check your quota."
     if any(marker in text for marker in ("404", "not found", "model")):
         return "The configured model is unavailable. Choose an available LLM_MODEL."
     if any(marker in text for marker in ("timeout", "timed out")):

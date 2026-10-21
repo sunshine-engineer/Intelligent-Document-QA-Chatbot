@@ -36,14 +36,8 @@ def new_correlation_id() -> str:
 
 def log_exception(correlation_id: str, category: str, error: Exception):
     LOGGER.error(
-        "operation failed error_type=%s error=%s",
+        "operation failed error_type=%s",
         type(error).__name__,
-        _redact(str(error)),
-        exc_info=(
-            (error.__class__, error, error.__traceback__)
-            if error.__traceback__ is not None
-            else False
-        ),
         extra={"correlation_id": correlation_id, "category": category},
     )
 

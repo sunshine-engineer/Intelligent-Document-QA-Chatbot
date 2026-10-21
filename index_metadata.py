@@ -24,6 +24,8 @@ def get_pdf_files(pdf_directory):
         filename
         for filename in sorted(os.listdir(pdf_directory))
         if filename.lower().endswith(".pdf")
+        and not filename.startswith(".")
+        and (Path(pdf_directory) / filename).is_file()
     ]
 
 
@@ -117,10 +119,17 @@ def is_valid_index_metrics(metrics):
 
 
 def get_pdf_state(pdf_directory):
+    return document_state(get_document_manifest(pdf_directory))
 
-    text = json.dumps(get_document_manifest(pdf_directory), sort_keys=True)
 
-    return hashlib.sha256(text.encode()).hexdigest()
+def document_state(manifest):
+    """Hash document content/identity, never mutable processing status."""
+    documents = manifest.get("documents", {})
+    identity = {
+        name: {key: record.get(key) for key in ("path", "sha256", "size")}
+        for name, record in documents.items()
+    }
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
 
 
 def _sha256_file(path):
@@ -189,6 +198,7 @@ def build_index_snapshot(
     document_manifest,
     chunks,
     indexed_at=None,
+    indexing_config=None,
 ):
     metrics = build_index_metrics(chunks, document_manifest, indexed_at)
     snapshot = build_index_manifest(
@@ -197,11 +207,10 @@ def build_index_snapshot(
     snapshot.update(
         {
             "snapshot_schema_version": 1,
-            "pdf_state": hashlib.sha256(
-                json.dumps(document_manifest, sort_keys=True).encode()
-            ).hexdigest(),
+            "pdf_state": document_state(document_manifest),
             "document_manifest": document_manifest,
             "metrics": metrics,
+            "indexing_config": indexing_config,
         }
     )
     return snapshot
@@ -213,7 +222,10 @@ def verify_index_snapshot(index_directory, embedding_provider, embedding_model):
         return False
     if not is_valid_index_metrics(snapshot.get("metrics")):
         return False
-    documents = snapshot.get("document_manifest", {}).get("documents")
+    document_manifest = snapshot.get("document_manifest")
+    if not isinstance(document_manifest, dict):
+        return False
+    documents = document_manifest.get("documents")
     if not isinstance(documents, dict):
         return False
     return _verify_manifest(
@@ -294,6 +306,7 @@ def save_index_snapshot_atomically(
     embedding_model,
     document_manifest,
     chunks,
+    indexing_config=None,
 ):
     """Replace the complete persisted generation only after it verifies."""
     index_path = Path(index_directory)
@@ -311,6 +324,7 @@ def save_index_snapshot_atomically(
             getattr(vectors.index, "d", None),
             document_manifest,
             chunks,
+            indexing_config=indexing_config,
         )
         _write_json(temporary_path / SNAPSHOT_FILE, snapshot)
         if not verify_index_snapshot(

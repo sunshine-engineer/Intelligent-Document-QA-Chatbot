@@ -1,591 +1,188 @@
-import os
-import time
+"""Streamlit adapter for the local, single-user document QA prototype."""
+
 import logging
-from json import JSONDecodeError
+import os
+from dataclasses import asdict
+from pathlib import Path
 
 import streamlit as st
 from dotenv import load_dotenv
-from index_metadata import (
-    compare_document_manifests,
-    discard_persisted_index,
-    get_pdf_files,
-    get_document_manifest,
-    get_pdf_state,
-    load_index_snapshot,
-    save_metadata,
-)
+
 from app_composition import (
     build_index_service,
     build_query_service,
     create_embedding_factory,
     create_llm,
 )
+from app_logging import configure_logging, log_exception, new_correlation_id
+from app_runtime import KnowledgeBase, synchronize_index
 from settings import Settings, provider_guidance
-from app_errors import ErrorCategory
-from app_logging import configure_logging, log_event, log_exception, new_correlation_id
 
-# ==========================================================
-# Page Configuration
-# ==========================================================
-
-st.set_page_config(
-    page_title="Local RAG Assistant",
-    page_icon="🤖",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-
-def load_css():
-    with open(".streamlit/style.css") as f:
-        st.markdown(
-            f"<style>{f.read()}</style>",
-            unsafe_allow_html=True,
-        )
-
-
-load_css()
-
-# ==========================================================
-# Load Environment Variables
-# ==========================================================
+st.set_page_config(page_title="Local RAG Assistant", page_icon="🤖", layout="wide")
+style_path = Path(__file__).parent / ".streamlit" / "style.css"
+if style_path.is_file():
+    st.markdown(f"<style>{style_path.read_text()}</style>", unsafe_allow_html=True)
 
 load_dotenv()
-configure_logging()
-
 settings = Settings.from_env()
-configuration_errors = settings.validate()
-log_event(
-    logging.INFO,
-    "application_configuration_loaded",
-    category="configuration",
-    llm_model=settings.llm_model,
-    embedding_model=settings.embedding_model,
-    pdf_directory=settings.pdf_directory,
-    index_directory=settings.index_directory,
-    default_top_k=settings.default_top_k,
-)
-
-# ==========================================================
-# Constants
-# ==========================================================
-
-EMBEDDING_PROVIDER = "ollama"
-PDF_DIRECTORY = str(settings.pdf_directory)
-FAISS_INDEX_PATH = str(settings.index_directory)
-EMBEDDING_MODEL = settings.embedding_model
-
-# ==========================================================
-# LLM
-# ==========================================================
-
-llm = create_llm(settings)
-
-# ==========================================================
-# Load Existing FAISS Index
-# ==========================================================
-
-
-def load_vector_store(show_error=True):
-
-    try:
-        vectors, metrics = index_service.load()
-        st.session_state.vectors = vectors
-        st.session_state.index_metrics = metrics
-        return True
-    except Exception:
-        if show_error:
-            st.error("Saved FAISS index could not be loaded. Rebuild the index.")
-        st.session_state.vectors = None
-        st.session_state.index_metrics = None
-        return False
-
-
-# ==========================================================
-# Embedding Model
-# ==========================================================
-
-
-def get_embedding_model():
-
-    if st.session_state.embeddings is None:
-
-        st.session_state.embeddings = create_embedding_factory(settings)()
-
-    return st.session_state.embeddings
-
-
-# ==========================================================
-# Build Embeddings
-# ==========================================================
-
-index_service = build_index_service(settings, get_embedding_model)
-
-
-def create_vector_embedding(document_changes=None):
-
-    try:
-        vectors, metrics, docs, final_documents = index_service.build(
-            document_changes,
-            st.session_state.vectors,
-        )
-        st.session_state.docs = docs
-        st.session_state.final_documents = final_documents
-        st.session_state.vectors = vectors
-        st.session_state.index_metrics = metrics
-        st.session_state.startup_message = None
-        return True
-    except Exception:
-        raise
-
-
-# ==========================================================
-# Session State Initialization
-# ==========================================================
-
-
-def initialize_session_state():
-
-    defaults = {
-        "messages": [],
-        "docs": [],
-        "final_documents": [],
-        "vectors": None,
-        "embeddings": None,
-        "startup_message": None,
-        "index_metrics": None,
-    }
-
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-
-initialize_session_state()
-
-if configuration_errors:
-    log_event(
-        logging.ERROR,
-        "invalid_configuration",
-        category="configuration",
-        error_count=len(configuration_errors),
-    )
+errors = settings.validate()
+if errors:
     st.error("Invalid application configuration:")
-    for configuration_error in configuration_errors:
-        st.write(f"- {configuration_error}")
+    for error in errors:
+        st.write(f"- {error}")
     st.stop()
 
-current_state = get_pdf_state(PDF_DIRECTORY)
-pdf_files = get_pdf_files(PDF_DIRECTORY)
-current_document_manifest = get_document_manifest(PDF_DIRECTORY)
-
 try:
-    saved = load_index_snapshot(FAISS_INDEX_PATH)
-except (OSError, JSONDecodeError):
-    saved = None
+    configure_logging()
+except OSError:
+    # A read-only log directory must not prevent the UI reporting service errors.
+    logging.getLogger("rag_assistant").addHandler(logging.NullHandler())
 
-needs_rebuild = (
-    not isinstance(saved, dict)
-    or saved.get("pdf_state") != current_state
-    or not isinstance(saved.get("document_manifest"), dict)
-    or not os.path.exists(FAISS_INDEX_PATH)
-)
-document_changes = compare_document_manifests(
-    saved.get("document_manifest") if isinstance(saved, dict) else None,
-    current_document_manifest,
-)
-needs_rebuild = needs_rebuild or any(
-    document_changes[key] for key in ("added", "changed", "removed")
-)
-
-if not pdf_files:
-    log_event(logging.INFO, "knowledge_base_empty", category="ingestion")
-    st.session_state.vectors = None
-    if isinstance(saved, dict) and saved.get("document_manifest", {}).get("documents"):
-        discard_persisted_index(FAISS_INDEX_PATH)
-        empty_metrics = {
-            "schema_version": 1,
-            "document_count": 0,
-            "chunk_count": 0,
-            "per_document_chunk_counts": {},
-            "indexed_at": None,
-        }
-        st.session_state.index_metrics = empty_metrics
-        save_metadata(current_state, current_document_manifest, empty_metrics)
-    st.session_state.startup_message = (
-        "Add at least one PDF to research_papers/ to build the knowledge base."
-    )
-elif needs_rebuild:
-    log_event(
-        logging.INFO,
-        "knowledge_base_rebuild_required",
-        category="indexing",
-        added=len(document_changes["added"]),
-        changed=len(document_changes["changed"]),
-        removed=len(document_changes["removed"]),
-    )
-
-    with st.spinner("Indexing research papers..."):
-
-        try:
-            if not load_vector_store(show_error=False):
-                st.session_state.vectors = None
-                log_event(
-                    logging.INFO,
-                    "verified_base_index_unavailable_full_rebuild_selected",
-                    category="indexing",
-                )
-            create_vector_embedding(document_changes)
-        except Exception as error:
-            correlation_id = new_correlation_id()
-            log_exception(correlation_id, ErrorCategory.INDEXING.value, error)
-            st.session_state.vectors = None
-            st.session_state.startup_message = (
-                "Knowledge-base indexing failed. Check the PDF files and "
-                f"embedding service, then use Refresh Knowledge Base. "
-                f"Reference: {correlation_id}."
-            )
-else:
-    log_event(logging.INFO, "saved_index_reload_required", category="indexing")
-    if not load_vector_store(show_error=False):
-        with st.spinner("Recovering the knowledge base..."):
-            try:
-                create_vector_embedding()
-            except Exception as error:
-                correlation_id = new_correlation_id()
-                log_exception(correlation_id, ErrorCategory.INDEXING.value, error)
-                st.session_state.vectors = None
-                st.session_state.startup_message = (
-                    "The saved index could not be loaded or rebuilt. "
-                    "Use Refresh Knowledge Base after checking the services. "
-                    f"Reference: {correlation_id}."
-                )
+for key, value in {"messages": [], "knowledge_base": KnowledgeBase()}.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 
-# ==========================================================
-# Sidebar
-# ==========================================================
-
-with st.sidebar:
-
-    st.title("⚙️ Dashboard")
-
-    st.divider()
-    st.subheader("Retrieval Settings")
-
-    top_k = st.slider(
-        "Top K Chunks",
-        min_value=1,
-        max_value=settings.max_top_k,
-        value=settings.default_top_k,
-    )
-    if st.button(
-        "🗑 Clear Chat",
-        use_container_width=True,
-    ):
-
-        st.session_state.messages.clear()
-        st.toast("Conversation cleared")
-        time.sleep(0.5)
-        st.rerun()
-
-    st.subheader("System")
-
-    if llm is None:
-        st.warning(
-            "GROQ_API_KEY is not configured. Indexing is available, but answers "
-            "remain unavailable until the credential is added to .env."
-        )
-
-    st.write("**LLM**")
-    st.caption(settings.llm_model)
-
-    st.write("**Embeddings**")
-    st.caption(settings.embedding_model)
-    st.caption("Effective configuration is validated; credentials are redacted.")
-    with st.expander("Effective configuration", expanded=False):
-        st.json(settings.redacted_summary())
-
-    st.write("**Vector Store**")
-    st.caption("FAISS")
-
-    st.divider()
-
-    if st.session_state.vectors is not None:
-
-        st.success("Knowledge Base Ready")
-
-    else:
-
-        st.warning("Knowledge Base Not Loaded")
-
-    st.metric(
-        "Documents",
-        (
-            st.session_state.index_metrics.get("document_count", "Unavailable")
-            if st.session_state.index_metrics
-            else "Unavailable"
-        ),
-    )
-
-    st.metric(
-        "Chunks",
-        (
-            st.session_state.index_metrics.get("chunk_count", "Unavailable")
-            if st.session_state.index_metrics
-            else "Unavailable"
-        ),
-    )
-
-    if st.session_state.index_metrics:
-        indexed_at = st.session_state.index_metrics.get("indexed_at", "Unavailable")
-        st.caption(f"Last indexed: {indexed_at}")
-
-    st.divider()
-
-    if st.button(
-        "🔄 Refresh Knowledge Base",
-        use_container_width=True,
-    ):
-
-        with st.spinner("Refreshing embeddings..."):
-
-            start = time.perf_counter()
-
-            create_vector_embedding()
-
-            elapsed = time.perf_counter() - start
-
-        st.success(f"Knowledge Base created in {elapsed:.2f} sec")
-
-    if st.button(
-        "📂 Load Saved Index",
-        use_container_width=True,
-    ):
-
-        with st.spinner("Loading FAISS index..."):
-
-            loaded = load_vector_store()
-
-        if loaded:
-            st.success("FAISS index loaded.")
-
-        else:
-            st.warning("No saved index found.")
+def safe_error(error, category):
+    reference = new_correlation_id()
+    log_exception(reference, category, error)
+    st.error(f"{provider_guidance(error)} Reference: {reference}.")
 
 
-# ==========================================================
-# Conversation History Helper
-# ==========================================================
-
-
-def build_chat_history():
-
-    history = ""
-
-    # Exclude the current user message
-    previous_messages = st.session_state.messages[:-1]
-
-    for message in previous_messages[-10:]:
-
-        history += f"{message['role'].capitalize()}: " f"{message['content']}\n"
-
-    return history
-
-
-# ==========================================================
-# Prompt
-# ==========================================================
-
-# ==========================================================
-# Main UI
-# ==========================================================
+llm = None
+try:
+    llm = create_llm(settings)
+except Exception as error:
+    safe_error(error, "configuration")
 
 st.title("🤖 Local RAG Assistant")
-
+st.caption("Ask questions about a local collection of text-based PDFs.")
 st.caption(
-    "Ask questions about your research papers using Retrieval-Augmented Generation."
+    "Privacy: embeddings run in Ollama; questions, recent history, and retrieved "
+    "document text are sent to Groq for answers. Use documents you may share."
 )
 
-st.divider()
+with st.sidebar:
+    st.title("⚙️ Dashboard")
+    if settings.max_top_k == 1:
+        top_k = 1
+        st.caption("Top K Chunks: 1")
+    else:
+        top_k = st.slider("Top K Chunks", 1, settings.max_top_k, settings.default_top_k)
+    if st.button("🗑 Clear Chat", use_container_width=True):
+        st.session_state.messages = []
+        st.rerun()
+    refresh = st.button("🔄 Refresh Knowledge Base", use_container_width=True)
+    load_saved = st.button("📂 Load Saved Index", use_container_width=True)
+    st.caption(f"LLM: {settings.llm_model}")
+    st.caption(f"Embeddings: {settings.embedding_model}")
+    with st.expander("Effective configuration"):
+        st.json(settings.redacted_summary())
+    if llm is None:
+        st.warning("Configure GROQ_API_KEY in .env to enable answers.")
 
-# ==========================================================
-# Welcome Screen
-# ==========================================================
+# All discovery, provider construction, loading, and refresh errors share this
+# boundary. Failed synchronization disables queries against possibly stale PDFs.
+index_ready = False
+try:
+    embedding_factory = create_embedding_factory(settings)
+    index_service = build_index_service(settings, embedding_factory)
+    previous = None if load_saved else st.session_state.knowledge_base
+    with st.spinner("Checking knowledge base..."):
+        knowledge_base = synchronize_index(index_service, previous, force=refresh)
+    st.session_state.knowledge_base = knowledge_base
+    index_ready = knowledge_base.vectors is not None
+except Exception as error:
+    safe_error(error, "indexing")
+    st.warning(
+        "Indexing or discovery failed. Check PDF permissions, PDF validity and "
+        "Ollama, then use Refresh Knowledge Base. The last saved index is retained."
+    )
 
-if st.session_state.vectors is None:
+knowledge_base = st.session_state.knowledge_base
+with st.sidebar:
+    st.write("Knowledge Base Ready" if index_ready else "Knowledge Base Not Loaded")
+    if index_ready and knowledge_base.metrics:
+        st.metric("Documents", knowledge_base.metrics["document_count"])
+        st.metric("Chunks", knowledge_base.metrics["chunk_count"])
+        st.caption(f"Last indexed: {knowledge_base.metrics['indexed_at']}")
 
-    if st.session_state.startup_message:
-        st.warning(st.session_state.startup_message)
+if not index_ready:
+    st.info(
+        f"Place text-based PDFs in {settings.pdf_directory}/ and select "
+        "Refresh Knowledge Base. Scanned/image-only PDFs require OCR elsewhere."
+    )
 
-    st.info("""
-### 👋 Welcome!
 
-This application lets you query local research papers using a
-Retrieval-Augmented Generation (RAG) pipeline.
-
-### Current Stack
-
-- Groq Llama 3.1
-- Ollama Embeddings
-- FAISS Vector Database
-- LangChain
-- Streamlit
-
-### Getting Started
-
-1. Place PDFs inside:
-research_papers/
-
-2. Click **📚 Build Knowledge Base**
-
-3. Wait for embeddings to finish
-
-4. Start chatting with your documents
-
----
-""")
-
-else:
-    st.success("✅ Knowledge Base Ready")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.metric(
-            "Documents",
-            st.session_state.index_metrics.get("document_count", "Unavailable"),
+def render_answer_metadata(message, number):
+    timings = message.get("timings")
+    if timings:
+        st.caption(
+            f"Retrieval: {timings['retrieval_latency_ms']:.0f} ms · "
+            f"First token: {timings['first_token_latency_ms'] or 0:.0f} ms · "
+            f"Total: {timings['total_latency_ms']:.0f} ms"
         )
-
-    with col2:
-        st.metric(
-            "Chunks", st.session_state.index_metrics.get("chunk_count", "Unavailable")
-        )
-
-    with col3:
-        st.metric("Top-K", top_k)
-
-    st.divider()
-
-    # ----------------------------
-    # Display previous messages
-    # ----------------------------
-
-    for message in st.session_state.messages:
-
-        with st.chat_message(message["role"]):
-
-            st.markdown(message["content"])
-
-    user_prompt = st.chat_input("Ask something about your documents...")
-
-    if user_prompt:
-
-        if llm is None:
-            st.error("Configure GROQ_API_KEY before asking a question.")
-            st.stop()
-
-        # ----------------------------
-        # Save user message
-        # ----------------------------
-
-        st.session_state.messages.append(
-            {
-                "role": "user",
-                "content": user_prompt,
-            }
-        )
-
-        with st.chat_message(
-            "user",
-            avatar="👤",
-        ):
-
-            st.markdown(user_prompt)
-
-        # ----------------------------
-        # Build RAG
-        # ----------------------------
-
-        history = build_chat_history()
-
-        with st.chat_message(
-            "assistant",
-            avatar="🤖",
-        ):
-
-            with st.spinner("Searching documents..."):
-
-                correlation_id = new_correlation_id()
-                try:
-                    query_result = build_query_service(
-                        st.session_state.vectors, llm, settings, top_k
-                    ).ask_stream(user_prompt, history, correlation_id)
-                    answer = st.write_stream(query_result.stream)
-                except Exception as e:
-                    log_exception(correlation_id, ErrorCategory.PROVIDER.value, e)
-                    st.error(f"{provider_guidance(e)} Reference: {correlation_id}.")
-                    st.stop()
-
-                st.session_state.last_citations = query_result.citations
-
+    st.download_button(
+        "📥 Download Response",
+        message["content"],
+        file_name="rag_response.txt",
+        mime="text/plain",
+        key=f"download-{number}",
+    )
+    citations = message.get("citations", [])
+    if citations:
+        with st.expander(f"📚 Retrieved Sources ({len(citations)})"):
             st.caption(
-                f"⏱ Retrieval: {query_result.timings.retrieval_latency_ms:.0f} ms · "
-                "First token: "
-                f"{query_result.timings.first_token_latency_ms or 0:.0f} ms · "
-                f"Generation: {query_result.timings.generation_latency_ms:.0f} ms · "
-                f"Total: {query_result.timings.total_latency_ms:.0f} ms"
+                "Retrieved evidence is shown for inspection; source references "
+                "do not automatically prove every generated claim."
             )
+            for source_id, citation in enumerate(citations, 1):
+                st.write(
+                    f"[S{source_id}] {os.path.basename(citation['document'])} · "
+                    f"Page: {citation['page'] or 'Unknown'}"
+                )
+                st.code(citation["excerpt"], language=None)
+                st.caption(f"Score: {citation['retrieval_score']:.3f}")
 
-            st.download_button(
-                label="📥 Download Response",
-                data=answer,
-                file_name="rag_response.txt",
-                mime="text/plain",
-                use_container_width=True,
-            )
 
-        # ----------------------------
-        # Save assistant message
-        # ----------------------------
+for number, message in enumerate(st.session_state.messages):
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if message["role"] == "assistant":
+            render_answer_metadata(message, number)
 
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "content": answer,
-            }
-        )
-
-        # ----------------------------
-        # Sources
-        # ----------------------------
-
-        if "last_citations" in st.session_state:
-            with st.expander(
-                f"📚 Retrieved Sources ({len(query_result.citations)})",
-                expanded=False,
-            ):
-
-                for i, citation in enumerate(query_result.citations, start=1):
-
-                    st.markdown(f"### 📄 Source {i}")
-
-                    col1, col2 = st.columns([3, 1])
-
-                    with col1:
-                        st.write(f"**File:** {os.path.basename(citation.document)}")
-
-                    with col2:
-                        if citation.page is not None:
-                            st.write(f"**Page:** {citation.page}")
-
-                    st.code(
-                        citation.excerpt,
-                        language=None,
-                    )
-                    st.caption(
-                        f"Chunk: {citation.chunk_id} · "
-                        f"Score: {citation.retrieval_score:.3f}"
-                    )
-
-                    st.divider()
+question = st.chat_input(
+    "Ask something about your documents...", disabled=not index_ready or llm is None
+)
+if question:
+    if len(question) > 4000:
+        st.error("Keep questions within 4,000 characters.")
+        st.stop()
+    history = "\n".join(
+        f"{message['role'].capitalize()}: {message['content']}"
+        for message in st.session_state.messages[-10:]
+    )[-6000:]
+    with st.chat_message("user"):
+        st.markdown(question)
+    with st.chat_message("assistant"):
+        try:
+            result = build_query_service(
+                knowledge_base.vectors, llm, settings, top_k
+            ).ask_stream(question, history)
+            answer = st.write_stream(result.stream)
+        except Exception as error:
+            safe_error(error, "provider")
+            st.info("The response was not saved. Retry the question when ready.")
+            st.stop()
+        assistant_message = {
+            "role": "assistant",
+            "content": answer,
+            "citations": [asdict(citation) for citation in result.citations],
+            "timings": asdict(result.timings),
+        }
+        number = len(st.session_state.messages) + 1
+        render_answer_metadata(assistant_message, number)
+    # Commit the turn only after the stream completed successfully.
+    st.session_state.messages.extend(
+        [{"role": "user", "content": question}, assistant_message]
+    )

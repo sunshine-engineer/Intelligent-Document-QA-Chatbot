@@ -14,6 +14,7 @@ from index_metadata import (
     save_index_snapshot_atomically,
     verify_index_manifest,
     is_valid_index_metrics,
+    document_state,
 )
 import logging
 import time
@@ -26,6 +27,15 @@ class IndexConfig:
     index_directory: str
     embedding_provider: str
     embedding_model: str
+    chunk_size: int = 1000
+    chunk_overlap: int = 200
+
+    def indexing_config(self):
+        return {
+            "splitter": "RecursiveCharacterTextSplitter:v1",
+            "chunk_size": self.chunk_size,
+            "chunk_overlap": self.chunk_overlap,
+        }
 
 
 class IndexService:
@@ -73,14 +83,18 @@ class IndexService:
             )
             raise error
 
+        manifest = load_index_snapshot(self.config.index_directory)
+        if not isinstance(manifest, dict):
+            raise ValueError("Saved FAISS index manifest is unavailable")
+        if manifest.get("indexing_config") != self.config.indexing_config():
+            raise ValueError(
+                "Saved FAISS chunk configuration changed; rebuild required"
+            )
         vectors = self.faiss_loader(
             self.config.index_directory,
             self.embedding_factory(),
             allow_dangerous_deserialization=True,
         )
-        manifest = load_index_snapshot(self.config.index_directory)
-        if not isinstance(manifest, dict):
-            raise ValueError("Saved FAISS index manifest is unavailable")
         if manifest.get("vector_dimension") != getattr(vectors.index, "d", None):
             raise ValueError("Saved FAISS index dimension verification failed")
 
@@ -103,6 +117,7 @@ class IndexService:
     ) -> tuple[Any, dict, list, list]:
         correlation_id = new_correlation_id()
         started_at = time.perf_counter()
+        initial_manifest = get_document_manifest(self.config.pdf_directory)
         # A persisted snapshot must contain metrics for the complete chunk set.
         # Rebuild the affected generation from explicit chunk records rather
         # than reading FAISS's private document-store mappings.
@@ -128,6 +143,10 @@ class IndexService:
         documents_to_embed = docs
 
         final_documents = splitter.split_documents(documents_to_embed)
+        if not final_documents:
+            raise ValueError(
+                "No extractable text found. Use text-based, readable PDFs."
+            )
         log_event(
             logging.INFO,
             "documents_chunked",
@@ -149,6 +168,8 @@ class IndexService:
             vectors.add_documents(final_documents)
 
         document_manifest = get_document_manifest(self.config.pdf_directory)
+        if document_state(initial_manifest) != document_state(document_manifest):
+            raise ValueError("PDF files changed while indexing; retry the refresh")
         for document in document_manifest["documents"].values():
             document["status"] = "indexed"
         snapshot = save_index_snapshot_atomically(
@@ -158,6 +179,7 @@ class IndexService:
             self.config.embedding_model,
             document_manifest,
             final_documents,
+            indexing_config=self.config.indexing_config(),
         )
         metrics = snapshot["metrics"]
         log_event(

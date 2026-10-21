@@ -10,10 +10,12 @@ import subprocess
 import sys
 import tempfile
 import time
+from unittest.mock import patch
 from urllib.error import URLError
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 
 def available_port() -> int:
@@ -50,12 +52,20 @@ def main() -> None:
         environment = os.environ.copy()
         environment.update(
             {
-                "PDF_DIRECTORY": "empty-pdfs",
-                "INDEX_DIRECTORY": "empty-index",
+                "PDF_DIRECTORY": str(workspace / "empty-pdfs"),
+                "INDEX_DIRECTORY": str(workspace / "empty-index"),
                 "GROQ_API_KEY": "",
                 "PYTHONPATH": str(ROOT),
             }
         )
+        from streamlit.testing.v1 import AppTest
+
+        with patch.dict(os.environ, environment):
+            app = AppTest.from_file(str(ROOT / "app.py"), default_timeout=30).run()
+            if app.exception:
+                raise RuntimeError("Streamlit application execution failed")
+            if not app.chat_input[0].disabled:
+                raise RuntimeError("Empty knowledge base must disable questions")
         process = subprocess.Popen(
             [
                 sys.executable,

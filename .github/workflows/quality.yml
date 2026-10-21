@@ -41,6 +41,7 @@ jobs:
           uv run python evaluation/run_offline.py
           --output evaluation-results.json
       - name: Upload quality evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: quality-evidence

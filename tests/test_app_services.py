@@ -28,7 +28,11 @@ class AppServiceTests(unittest.TestCase):
             patch("app_services.verify_index_manifest", return_value=True),
             patch(
                 "app_services.load_index_snapshot",
-                return_value={"vector_dimension": 3, "metrics": metrics},
+                return_value={
+                    "vector_dimension": 3,
+                    "metrics": metrics,
+                    "indexing_config": service.config.indexing_config(),
+                },
             ),
             patch("app_services.is_valid_index_metrics", return_value=True),
         ):
