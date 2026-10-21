@@ -22,9 +22,21 @@ model quality. Live Groq and Ollama checks are disabled by default and run in
 CI only when `RUN_LIVE_PROVIDER_CHECKS=true`, `GROQ_API_KEY`, and
 `OLLAMA_SMOKE_URL` are configured as repository variables/secrets.
 
-CI also starts Streamlit against an empty temporary knowledge base and waits
-for its health endpoint. This proves that a no-credential, no-document startup
-state remains usable without contacting either provider.
+CI executes the application in a real Streamlit AppTest session against an empty
+temporary knowledge base, verifies no script exception and a disabled chat input,
+and separately waits for the server health endpoint. Tests also exercise answer
+evidence after reruns, manual refresh failures, failed streams, history-aware
+composition, and actual FAISS persistence/search with deterministic embeddings.
+These checks do not contact live Groq/Ollama providers.
+
+The evaluation CLI has a default minimum of 1.0 for each synthetic baseline metric
+and exits nonzero on regression while still writing the result artifact. Override
+thresholds explicitly with options such as `--min-recall-at-k 0.9` for a different
+dataset. Recall is source-level relevant retrieval fraction. `citation_correctness`
+is document/page pair precision, not semantic claim support. Retrieval MRR and
+recall exclude clarification-only and unsupported cases; clarification accuracy
+uses only cases marked `clarification_expected`. Answer/refusal decision accuracy
+includes all cases. The expected fixture scores are 1.0 after denominator fixes.
 
 To demonstrate a blocked change, temporarily introduce an unused import or
 change an expected evaluation source, run the commands above, and observe Ruff
@@ -32,3 +44,6 @@ or pytest fail. Revert the intentional change before committing. `main` must
 require the GitHub check named `Quality gates / quality` before merge; configure
 that rule in the repository branch protection settings after the first passing
 run.
+
+The corrected fixture is versioned separately as `evaluation/dataset.v2.json`;
+`dataset.v1.json` is retained as the historical pre-fix dataset.

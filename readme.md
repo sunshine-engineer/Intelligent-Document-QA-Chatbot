@@ -1,212 +1,155 @@
-# 🤖 Local RAG Assistant
+# Local RAG Assistant
 
-> **Production-oriented Retrieval-Augmented Generation (RAG) chatbot** built with Streamlit, LangChain, Ollama Embeddings, FAISS, Docker, and Groq.
+A single-user portfolio prototype for asking questions about text-based PDFs.
+It uses Streamlit, LangChain, local Ollama embeddings, FAISS, and Groq generation.
+This is independent portfolio work; live answer quality and deployment readiness
+must be supported by measured evidence before making broader claims.
 
----
+## What works
 
-# 📸 Demo
+- Discover PDFs in `research_papers/` and rebuild when content or chunk settings change.
+- Reuse an unchanged index across interactions and restarts.
+- Stream answers, display retrieved file/page evidence, and download responses.
+- Expand contextual follow-ups with bounded recent history; clarify short ambiguous references.
+- Refuse when no retrieved passages pass the configured score threshold.
+- Keep answer evidence and timing available while the session remains open.
+- Verify saved index artifact sizes/checksums and embedding/chunk configuration.
+- Run provider-free regression checks and a synthetic evaluation with quality thresholds.
 
-> **Demo GIF**
-
-`docs/demo.gif`
-
----
-
-# 🖼 Screenshots
-
-## Home
-![Home](assets/HOME.png)
-
-## Chat
-![Chat](assets/CHAT.png)
-
-## Sources
-![Sources](assets/Sources.png)
-
----
-
-# Features
-
-- Automatic PDF discovery from `research_papers/`
-- Automatic index rebuild when PDFs change
-- Manual knowledge base refresh
-- FAISS vector database
-- Ollama local embeddings (`nomic-embed-text`)
-- Groq Llama 3.1 inference
-- Conversation history
-- Source citations with file and page
-- Response download
-- Dockerized deployment
-- Configurable Top-K retrieval
-
----
-
-# Architecture
+## Data flow and privacy
 
 ```text
-                User
-                  │
-            Streamlit UI
-                  │
-        Retrieval Chain (LangChain)
-          │                  │
-          │                  ▼
-          │            Groq LLM
-          ▼
-       FAISS Retriever
-          │
-          ▼
- Ollama Embeddings
-          │
-          ▼
- Research Papers (PDFs)
+Text PDFs -> loader -> chunks -> Ollama embeddings -> local FAISS index
+Question + recent history -> retrieval -> evidence + question + history -> Groq
+Groq streamed answer -> Streamlit -> retrieved evidence for human inspection
 ```
 
----
+**Document processing is not entirely local.** Questions, recent conversation
+history, and retrieved PDF text are sent to Groq. Do not use confidential files
+unless you are permitted to share their contents with that provider. Chat history
+is session-only. Clear Chat removes it from the current session; filesystem PDFs,
+indexes, and application logs are separate data stores.
 
-# Automatic Indexing
+Source IDs such as `[S1]` map to the retrieved evidence panels. They help a user
+inspect answers; they do not automatically establish factual support for every
+claim. Instructions in documents are treated as untrusted prompt content, but
+prompt-injection resistance and live answer faithfulness still require evaluation.
 
-On startup:
+## Quick start with Docker Compose
 
-1. Scan `research_papers/`
-2. Compare PDF metadata with saved metadata
-3. If unchanged → load FAISS
-4. If changed → rebuild embeddings
-5. Save updated metadata
-
-## Persisted index trust boundary
-
-The local FAISS store contains a pickle-backed document mapping because of the
-current LangChain FAISS persistence format. The application does not load that
-mapping until a separate manifest verifies the expected schema, embedding
-provider, embedding model, artifact sizes, and SHA-256 checksums. Index files
-that are missing, modified, incompatible, or created without a manifest are
-rejected and rebuilt instead of being treated as a valid knowledge base.
-
-The index directory is application-generated state. Do not replace its files
-with artifacts from an untrusted source.
-
----
-
-# Tech Stack
-
-| Component | Technology |
-|-----------|------------|
-| UI | Streamlit |
-| LLM | Groq (configurable model) |
-| Embeddings | Ollama + nomic-embed-text |
-| Vector DB | FAISS |
-| Framework | LangChain |
-| Document Loader | PyPDFDirectoryLoader |
-| Containerization | Docker Compose |
-
----
-
-# Project Structure
-
-```text
-.
-├── app.py
-├── index_metadata.py
-├── research_papers/
-├── faiss_index/
-├── .streamlit/
-├── docker-compose.yml
-├── pyproject.toml
-├── uv.lock
-└── README.md
-```
-
----
-
-# Installation
+Install Docker with the Compose plugin. The initial run needs network access to
+download images, Python dependencies, and the Ollama embedding model. Ensure your
+machine has space and memory for these downloads and your PDF collection; no
+minimum hardware benchmark has been established for this prototype.
 
 ```bash
-git clone <repo>
-cd project
+git clone https://github.com/sunshine-engineer/Intelligent-Document-QA-Chatbot.git
+cd Intelligent-Document-QA-Chatbot
 cp .env.sample .env
+# Edit .env and set GROQ_API_KEY to your own key, without committing it.
 docker compose up --build
-
-# Optional PostgreSQL profile; not required by the current FAISS workflow.
-docker compose --profile persistence up --build
 ```
 
----
+Open <http://localhost:8501>. Place readable, text-based PDFs in
+`research_papers/`. The first session builds the index; **Refresh Knowledge Base**
+forces a rebuild. Indexing works without a Groq key; answering requires a key.
+The configured models must be available in your provider account/runtime.
 
-# Environment Variables
+PostgreSQL is an optional, currently unused development profile. It is not part
+of the working document-QA data path.
 
-```env
-GROQ_API_KEY=YOUR_KEY
-OLLAMA_HOST=http://ollama:11434
-LLM_MODEL=openai/gpt-oss-20b
-EMBEDDING_MODEL=nomic-embed-text:latest
-PDF_DIRECTORY=research_papers
-INDEX_DIRECTORY=faiss_index
-CHUNK_SIZE=1000
-CHUNK_OVERLAP=200
-DEFAULT_TOP_K=4
-MAX_TOP_K=10
-RETRIEVAL_RELEVANCE_THRESHOLD=0.35
+## Native development
+
+Install Python 3.12, `uv`, and Ollama using their official installation instructions:
+[Python](https://www.python.org/downloads/),
+[uv](https://docs.astral.sh/uv/getting-started/installation/),
+[Ollama](https://docs.ollama.com/quickstart), and
+[Groq API keys](https://console.groq.com/keys).
+
+```bash
+uv sync --all-groups --frozen
+cp .env.sample .env
+# For native execution, set OLLAMA_HOST=http://localhost:11434 in .env.
+# Set GROQ_API_KEY for answers. Keep the terminal running Ollama open.
+ollama serve
 ```
 
-`GROQ_API_KEY` is required only for answering questions; indexing remains
-available without it. Model names are passed directly to Groq and Ollama, so
-replace them with models available in your provider account. Invalid chunk or
-retrieval settings are rejected at startup, and credentials are never shown in
-configuration output.
+In a second terminal:
 
----
+```bash
+ollama pull nomic-embed-text:latest
+uv run streamlit run app.py
+```
 
-# Usage
+The development container and Docker image use the same lock file; their Python
+environments live at `/app/.venv` and `/opt/venv`, respectively.
 
-1. Add PDFs to `research_papers/`
-2. Start the application.
-3. Automatic indexing runs if documents changed.
-4. Ask questions.
-5. Review retrieved sources.
+## Configuration
 
----
+| Variable | Default | Purpose |
+|---|---|---|
+| `GROQ_API_KEY` | empty | Required for generated answers |
+| `LLM_MODEL` | `openai/gpt-oss-20b` | Groq generation model |
+| `EMBEDDING_MODEL` | `nomic-embed-text:latest` | Ollama embedding model |
+| `OLLAMA_HOST` | `http://ollama:11434` | Use `http://localhost:11434` for native execution |
+| `PDF_DIRECTORY` | `research_papers` | Input text PDFs |
+| `INDEX_DIRECTORY` | `faiss_index` | Generated local index; Compose overrides this internally |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1000` / `200` | Characters per chunk/overlap; changes invalidate saved chunks |
+| `DEFAULT_TOP_K` / `MAX_TOP_K` | `4` / `10` | Retrieval limits |
+| `RETRIEVAL_RELEVANCE_THRESHOLD` | `0.35` | Heuristic cutoff; needs calibration on real documents |
 
-# Quality and evaluation
+Generation requests use a 30-second provider timeout, two configured retries,
+and a 1,024-token output cap. Ollama requests use a 60-second timeout. Questions
+are limited to 4,000 characters; generation history to 6,000 characters and
+evidence text to 16,000 characters. These are character caps, not exact tokenizer
+budgets. Parsing and full-corpus indexing remain synchronous.
 
-Pull requests run frozen dependency installation, formatting, linting, type
-checking, core-module coverage, unit/integration-style tests, and a
-provider-free retrieval evaluation. The versioned synthetic evaluation fixture
-currently produces Recall@K 1.0, MRR 1.0, citation correctness 1.0, and refusal
-accuracy 1.0. These are deterministic regression-safety results only; they do
-not measure live Groq/Ollama or real-world document quality.
+## Validation and demonstration
 
-See [quality gate instructions](docs/quality-gates.md) for the exact commands,
-coverage threshold, CI artifacts, and optional secret-gated live checks.
+```bash
+uv run black --check .
+uv run ruff check .
+uv run mypy
+uv run python -m pytest --cov
+uv run python scripts/streamlit_smoke.py
+uv run python evaluation/run_offline.py --output evaluation-results.json
+```
 
----
+The synthetic fixture uses keyword retrieval and fake generation. After correcting
+its formulas and excluding clarification-only cases from retrieval denominators,
+its expected Recall@K, MRR, evidence-pair precision, answer/refusal decision
+accuracy, and clarification accuracy are all 1.0. These are regression baselines,
+not measured live Groq/Ollama quality. `citation_correctness` in the JSON output
+means document/page pair precision, not semantic claim verification.
 
-# Future Improvements
+Tests also execute Streamlit sessions and real FAISS persistence/search with
+local deterministic embeddings. See [quality gates](docs/quality-gates.md),
+[bug-fix status](docs/portfolio-fix-status.md), and the
+[manual demonstration checklist](docs/prototype-demo.md). A current recorded
+demonstration and real-provider evaluation remain outstanding.
 
-- Incremental indexing
-- Hybrid Search (BM25 + FAISS)
-- Cross-encoder reranking
-- PostgreSQL metadata storage
-- Authentication
+## Screenshots
 
----
+These are historical screenshots and may differ from the current controls.
 
-# Portfolio Highlights
+![Home](assets/HOME.png)
+![Chat](assets/CHAT.png)
+![Sources](assets/Sources.png)
 
-✅ Production-style RAG architecture
+## Limits and scope
 
-✅ Automatic knowledge-base synchronization
+- Single-user local prototype: no authentication, tenant isolation, or writer locking.
+- Chat history is lost when its session ends. No API, worker, or database integration exists.
+- Only text PDFs are supported; scanned/image PDFs need external OCR. No robust
+  per-file failure isolation, upload interface, or document viewer is implemented.
+- Every changed corpus is fully re-embedded. Incremental/hybrid retrieval and reranking are optional extensions.
+- Public hosting requires separate access control, TLS, private provider networking,
+  quotas, and deployment validation. The FastAPI and GCP documents are future plans.
+- FAISS persistence includes a pickle document store. Only load application-generated
+  artifacts from a trusted directory. Checksums detect corruption; they do not
+  authenticate files when someone can replace the manifest as well.
 
-✅ Docker deployment
-
-✅ Local embeddings
-
-✅ Source-grounded responses
-
-✅ Modular, extensible design
-
----
-
-# License
-
-MIT
+Read [local recovery instructions](docs/local-operations.md) and
+[container architecture](docs/container-architecture.md) before resetting state.
+Code is covered by [MIT](LICENSE); bundled PDFs have separate rights and are
+not relicensed by the code license. See [sample document notes](research_papers/README.md).
