@@ -1,4 +1,15 @@
+<!--
+File: docs/prototype-demo.md
+Purpose: Reproducible prototype demonstration.
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+-->
+
 # Reproducible prototype demonstration
+
+Start from [handover](handover.md) and record the exact commit with
+`git rev-parse HEAD`. The runtime baseline reviewed for these instructions is
+`8824d96`.
 
 This is a manual checklist, not a claim that live validation was completed.
 Use text PDFs you have permission to share with Groq and record model/configuration,
@@ -25,3 +36,23 @@ unsupported questions. Record expected document/page evidence and assess answers
 for factual support separately from retrieval scores. Publish observed results,
 including failures. The existing five-case offline fixture does not substitute
 for this evaluation.
+
+## Acceptance record
+
+Copy this into your private run notes and fill it from observation:
+
+| Field | Observed value |
+|---|---|
+| Commit / run date / operator | Pending |
+| OS, Python/container, model names | Pending |
+| Corpus provenance/version, document and page counts | Pending |
+| Initial indexing / warm restart / query timings | Pending |
+| Supported / unsupported / follow-up / ambiguous cases tested | Pending |
+| Correct evidence and factual support versus expected PDF pages | Pending |
+| Changed-document rebuild and outage recovery | Pending |
+| Backup/restore rehearsal | Pending |
+| Failures, limits and owner acceptance | Pending |
+
+The synthetic evaluator does not run real PDF/Ollama/FAISS/Groq QA; preparing
+real questions in its JSON alone does not create a live evaluation harness.
+Use manual evidence review until a real-provider runner is implemented.

@@ -1,9 +1,64 @@
+<!--
+File: README.md
+Purpose: Local RAG Assistant.
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+-->
+
 # Local RAG Assistant
 
 A single-user portfolio prototype for asking questions about text-based PDFs.
 It uses Streamlit, LangChain, local Ollama embeddings, FAISS, and Groq generation.
 This is independent portfolio work; live answer quality and deployment readiness
 must be supported by measured evidence before making broader claims.
+
+For a new maintainer, start with the [handover guide](docs/handover.md),
+[documentation map](docs/index.md), and [documentation audit](docs/documentation-audit.md).
+These distinguish current behavior, historical evidence, and future plans.
+
+## Directory structure
+
+The flat root Python modules form one small application; their imports remain
+stable. Each supporting directory has a single role. The complete per-file
+review is in the [file inventory](docs/file-inventory.md).
+
+```text
+.
+├── README.md                 # User entry point, setup, scope and navigation
+├── LICENSE                   # MIT code license; not the bundled PDFs' license
+├── pyproject.toml / uv.lock   # Runtime, dependencies and shared quality settings
+├── .env.sample               # Nonsecret environment defaults; copy to private .env
+├── Dockerfile                # Production Python image and frozen dependencies
+├── docker-compose*.yml       # Local services and development overlay
+├── app.py                    # Streamlit entry point; helpers before main()
+├── app_composition.py        # Real provider/loader/splitter/retrieval wiring
+├── app_runtime.py            # Discovery and persisted/session generation reuse
+├── app_services.py           # Testable index build/load orchestration
+├── index_metadata.py         # Content identity, integrity and snapshot persistence
+├── query_services.py         # Retrieval, citations, decisions and streaming
+├── settings.py               # Validated environment configuration
+├── app_errors.py             # Error taxonomy and safe message utilities
+├── app_logging.py            # Correlated logging and retention
+├── .devcontainer/            # Editor container definition and setup script
+├── .github/workflows/        # CI checks and opt-in provider connectivity smoke
+├── .streamlit/               # Public theme and CSS; secrets.toml is ignored
+├── assets/                   # Historical UI screenshots, preserved as binaries
+├── docs/                     # Current handover, configuration, operations and guides
+│   └── history/              # Pre-fix readiness review and dated fix evidence
+├── evaluation/               # Synthetic fixture versions and offline evaluator
+├── research_papers/          # Sample PDF inputs and unresolved provenance notes
+├── scripts/                  # Standalone smoke and repository-consistency commands
+└── tests/                    # Unit, composition, Streamlit and FAISS regressions
+```
+
+Generated/local directories are not source: `.venv/` stores native dependencies,
+`faiss_index/` stores generated snapshots, `logs/` stores application logs, and
+`vector_store/` is a legacy metadata location. Compose's active index is the
+child `faiss_index/index/`. Quality tools may create ignored caches and evidence
+files. Do not move or commit runtime data as part of source reorganization.
+
+See [contributor conventions](docs/contributing.md) for supported headers,
+Google-style docstrings, configuration policy and validation requirements.
 
 ## What works
 
@@ -45,7 +100,7 @@ minimum hardware benchmark has been established for this prototype.
 ```bash
 git clone https://github.com/sunshine-engineer/Intelligent-Document-QA-Chatbot.git
 cd Intelligent-Document-QA-Chatbot
-cp .env.sample .env
+test -f .env || cp .env.sample .env
 # Edit .env and set GROQ_API_KEY to your own key, without committing it.
 docker compose up --build
 ```
@@ -68,7 +123,7 @@ Install Python 3.12, `uv`, and Ollama using their official installation instruct
 
 ```bash
 uv sync --all-groups --frozen
-cp .env.sample .env
+test -f .env || cp .env.sample .env
 # For native execution, set OLLAMA_HOST=http://localhost:11434 in .env.
 # Set GROQ_API_KEY for answers. Keep the terminal running Ollama open.
 ollama serve
@@ -81,10 +136,17 @@ ollama pull nomic-embed-text:latest
 uv run streamlit run app.py
 ```
 
+Shell examples assume Bash/WSL and repository-root execution. On Windows use
+Docker Desktop with Linux-container/WSL integration for the container path.
+
 The development container and Docker image use the same lock file; their Python
 environments live at `/app/.venv` and `/opt/venv`, respectively.
 
 ## Configuration
+
+See the [complete reference](docs/configuration.md) for Compose-only variables,
+overrides, fixed client limits, and CI settings. Compose overrides both
+`OLLAMA_HOST` and `INDEX_DIRECTORY` regardless of their values in `.env`.
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -98,15 +160,17 @@ environments live at `/app/.venv` and `/opt/venv`, respectively.
 | `DEFAULT_TOP_K` / `MAX_TOP_K` | `4` / `10` | Retrieval limits |
 | `RETRIEVAL_RELEVANCE_THRESHOLD` | `0.35` | Heuristic cutoff; needs calibration on real documents |
 
-Generation requests use a 30-second provider timeout, two configured retries,
-and a 1,024-token output cap. Ollama requests use a 60-second timeout. Questions
-are limited to 4,000 characters; generation history to 6,000 characters and
-evidence text to 16,000 characters. These are character caps, not exact tokenizer
+Default generation requests use a 30-second provider timeout, two retries,
+and a 1,024-token output cap. Default Ollama requests use a 60-second timeout.
+The default UI question cap is 4,000 characters; history is capped at ten messages
+and 6,000 characters, and evidence text at 16,000 characters. These are adjustable
+through the provider, UI/context and logging groups in `.env.sample`. These are character caps, not exact tokenizer
 budgets. Parsing and full-corpus indexing remain synchronous.
 
 ## Validation and demonstration
 
 ```bash
+uv run python scripts/check_project_consistency.py
 uv run black --check .
 uv run ruff check .
 uv run mypy
@@ -115,7 +179,8 @@ uv run python scripts/streamlit_smoke.py
 uv run python evaluation/run_offline.py --output evaluation-results.json
 ```
 
-The synthetic fixture uses keyword retrieval and fake generation. After correcting
+The default synthetic fixture is `evaluation/dataset.v2.json`; v1 remains
+historical input and is not the current passing baseline. The fixture uses keyword retrieval and fake generation. After correcting
 its formulas and excluding clarification-only cases from retrieval denominators,
 its expected Recall@K, MRR, evidence-pair precision, answer/refusal decision
 accuracy, and clarification accuracy are all 1.0. These are regression baselines,
@@ -124,7 +189,7 @@ means document/page pair precision, not semantic claim verification.
 
 Tests also execute Streamlit sessions and real FAISS persistence/search with
 local deterministic embeddings. See [quality gates](docs/quality-gates.md),
-[bug-fix status](docs/portfolio-fix-status.md), and the
+[bug-fix status](docs/history/portfolio-fix-status.md), and the
 [manual demonstration checklist](docs/prototype-demo.md). A current recorded
 demonstration and real-provider evaluation remain outstanding.
 

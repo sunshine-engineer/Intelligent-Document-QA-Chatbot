@@ -1,8 +1,24 @@
+<!--
+File: docs/gcp-production-style-deployment-v1-plan.md
+Purpose: GCP Production-Style Deployment v1 Plan.
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+-->
+
 # GCP Production-Style Deployment v1 Plan
+
+## Status
+
+Future proposal, not a deployment runbook. Reviewed against runtime baseline
+`8824d96` on 22 October 2026: no Terraform/bootstrap implementation, production
+Compose topology, cloud delivery workflow, monitoring or cloud backup mechanism
+from this plan exists in the checkout. Issue references below are planning
+references; their live status was not audited for this handover. See
+[current handover](handover.md) for implemented behavior.
 
 ## Classification
 
-This is a hardened, production-style portfolio deployment: one Compute Engine VM with best-effort recovery. It is not highly available and must not be described as production-ready until formal RPO/RTO, application-consistent backups, redundancy, capacity testing, and incident procedures exist.
+This proposes a hardened, production-style portfolio deployment: one Compute Engine VM with best-effort recovery. It is not highly available and must not be described as production-ready until formal RPO/RTO, application-consistent backups, redundancy, capacity testing, and incident procedures exist.
 
 ## Architecture
 
@@ -19,7 +35,7 @@ This is a hardened, production-style portfolio deployment: one Compute Engine VM
 
 ## Interactive bootstrap inputs
 
-Project/billing details, GitHub repository, region/zone, VM name/type, disk size, domain/DNS, alert email, allowed Google accounts, OAuth client ID/secret, Groq key, model settings, and an explicit billable-apply confirmation. Secrets are entered without echo and never stored in Terraform state.
+Project/billing details, GitHub repository, region/zone, VM name/type, disk size, domain/DNS, alert email, allowed Google accounts, OAuth client ID/secret, Groq key, model settings, and an explicit billable-apply confirmation. The proposed implementation must accept secrets without echo and keep their values out of Terraform state; this behavior has not been implemented or verified.
 
 ## Dependency-ordered GitHub issues
 

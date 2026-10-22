@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# File: .devcontainer/setup.sh
+# Purpose: Synchronize and validate the Linux workspace development environment.
+# Maintainer: sunshine-engineer
+# Modified: 2026-10-23
 
 set -Eeuo pipefail
 
@@ -6,6 +10,9 @@ readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 readonly VENV_ACTIVATE="${PROJECT_ROOT}/.venv/bin/activate"
 
+# Print one setup progress message.
+# Arguments: $1 is the nonsecret message.
+# Returns: printf status; failures propagate under set -e.
 log() {
     printf '\n==> %s\n' "$1"
 }

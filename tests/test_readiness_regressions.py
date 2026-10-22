@@ -1,4 +1,9 @@
-"""Regressions for issues reproduced by the portfolio readiness review."""
+"""Regression tests for readiness regressions.
+
+File: tests/test_readiness_regressions.py
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+"""
 
 import copy
 import io
@@ -26,15 +31,31 @@ from index_metadata import (
 
 
 class FakeVectors:
+    """Deterministic FAISS-compatible test double for artifact and indexing
+    regressions.
+    """
+
     index = SimpleNamespace(d=3)
 
     def save_local(self, directory):
+        """Write deterministic stand-in FAISS files into the supplied directory.
+
+        Args:
+            directory: Temporary directory used to isolate filesystem test
+                artifacts.
+
+        Returns:
+            None.
+        """
         for name in ("index.faiss", "index.pkl"):
             Path(directory, name).write_bytes(b"fixture")
 
 
 class IndexLifecycleRegressions(unittest.TestCase):
+    """Regression cases for readiness regressions."""
+
     def test_processing_status_does_not_change_document_identity(self):
+        """Verify processing status does not change document identity."""
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, "paper.pdf").write_bytes(b"pdf fixture")
             manifest = get_document_manifest(directory)
@@ -42,6 +63,7 @@ class IndexLifecycleRegressions(unittest.TestCase):
             self.assertEqual(document_state(manifest), get_pdf_state(directory))
 
     def test_unchanged_startup_rerun_restart_and_configuration_change(self):
+        """Verify unchanged startup rerun restart and configuration change."""
         with tempfile.TemporaryDirectory() as directory:
             pdfs = Path(directory, "pdfs")
             pdfs.mkdir()
@@ -87,6 +109,7 @@ class IndexLifecycleRegressions(unittest.TestCase):
             self.assertFalse(Path(config.index_directory).exists())
 
     def test_legacy_snapshot_rebuilds_with_configuration(self):
+        """Verify legacy snapshot rebuilds with configuration."""
         with tempfile.TemporaryDirectory() as directory:
             vectors = FakeVectors()
             snapshot = save_index_snapshot_atomically(
@@ -95,12 +118,14 @@ class IndexLifecycleRegressions(unittest.TestCase):
             self.assertIsNone(snapshot["indexing_config"])
 
     def test_discovery_failure_propagates_to_safe_ui_boundary(self):
+        """Verify discovery failure propagates to safe ui boundary."""
         service = Mock()
         with patch("app_runtime.get_document_manifest", side_effect=PermissionError):
             with self.assertRaises(PermissionError):
                 synchronize_index(service)
 
     def test_empty_text_does_not_replace_previous_snapshot(self):
+        """Verify empty text does not replace previous snapshot."""
         with tempfile.TemporaryDirectory() as directory:
             service = IndexService(
                 IndexConfig(directory, str(Path(directory, "index")), "test", "v1"),
@@ -117,6 +142,7 @@ class IndexLifecycleRegressions(unittest.TestCase):
             service.faiss_factory.assert_not_called()
 
     def test_snapshot_hash_agrees_with_discovery(self):
+        """Verify snapshot hash agrees with discovery."""
         with tempfile.TemporaryDirectory() as directory:
             Path(directory, "paper.pdf").write_bytes(b"fixture")
             for name in ("index.faiss", "index.pkl"):
@@ -128,7 +154,10 @@ class IndexLifecycleRegressions(unittest.TestCase):
 
 
 class LoggingRegressions(unittest.TestCase):
+    """Regression cases for readiness regressions."""
+
     def test_emitted_chained_exception_contains_neither_secret_nor_payload(self):
+        """Verify emitted chained exception contains neither secret nor payload."""
         output = io.StringIO()
         handler = logging.StreamHandler(output)
         LOGGER.addHandler(handler)
@@ -155,10 +184,18 @@ class LoggingRegressions(unittest.TestCase):
 
 
 class EvaluationRegressions(unittest.TestCase):
+    """Regression cases for readiness regressions."""
+
     def setUp(self):
+        """Create isolated test inputs and register cleanup of environment changes.
+
+        Returns:
+            None.
+        """
         self.dataset = load_dataset(Path("evaluation/dataset.v2.json"))
 
     def test_partial_source_recall_is_fractional(self):
+        """Verify partial source recall is fractional."""
         self.dataset["cases"] = [
             {
                 "id": "multi-source",
@@ -172,6 +209,7 @@ class EvaluationRegressions(unittest.TestCase):
         self.assertEqual(evaluate(self.dataset)["recall_at_k"], 0.5)
 
     def test_citation_page_must_belong_to_expected_document(self):
+        """Verify citation page must belong to expected document."""
         self.dataset["cases"] = [
             {
                 "id": "crossed-pages",
@@ -184,12 +222,14 @@ class EvaluationRegressions(unittest.TestCase):
         self.assertEqual(evaluate(self.dataset)["citation_correctness"], 0)
 
     def test_clarification_does_not_reduce_retrieval_mrr(self):
+        """Verify clarification does not reduce retrieval mrr."""
         result = evaluate(self.dataset)
         self.assertEqual(result["retrieval_case_count"], 3)
         self.assertEqual(result["clarification_case_count"], 1)
         self.assertEqual(result["mrr"], 1)
 
     def test_cli_returns_failure_and_still_writes_degraded_results(self):
+        """Verify cli returns failure and still writes degraded results."""
         bad = copy.deepcopy(self.dataset)
         bad["cases"][0]["expected_sources"] = ["missing.pdf"]
         with tempfile.TemporaryDirectory() as directory:

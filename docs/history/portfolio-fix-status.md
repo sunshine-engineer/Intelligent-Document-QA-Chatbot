@@ -1,6 +1,18 @@
+<!--
+File: docs/history/portfolio-fix-status.md
+Purpose: Portfolio review fix status.
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+-->
+
 # Portfolio review fix status
 
-The original `PORTFOLIO_READINESS_REVIEW.md` is a historical review of commit
+Historical execution evidence: checks in this file were performed on 21 October
+2026 for PR #45. The PR was verified merged into `main` as `8824d96` during the
+22 October documentation audit. See [that audit](../documentation-audit.md) for
+fresh verification; do not treat old test runs as a new runtime sign-off.
+
+The original `portfolio-readiness-review.md` is a historical review of commit
 `9e0947c`. This file tracks the subsequent bug-fix change. Completed code changes
 are distinct from live-provider quality and deployment evidence.
 

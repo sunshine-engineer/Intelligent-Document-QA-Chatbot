@@ -1,6 +1,13 @@
-import os
-import json
+"""Track PDF content identity and persist integrity-checked index generations.
+
+File: index_metadata.py
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+"""
+
 import hashlib
+import json
+import os
 import shutil
 import tempfile
 from datetime import datetime, timezone
@@ -16,7 +23,16 @@ METRICS_SCHEMA_VERSION = 1
 
 
 def get_pdf_files(pdf_directory):
+    """List sorted top-level, non-hidden PDF files while tolerating a missing
+    directory.
 
+    Args:
+        pdf_directory: Directory whose top-level non-hidden PDF files are
+            inspected.
+
+    Returns:
+        Sorted PDF basenames, or an empty list for an absent input directory.
+    """
     if not os.path.isdir(pdf_directory):
         return []
 
@@ -30,7 +46,20 @@ def get_pdf_files(pdf_directory):
 
 
 def get_document_manifest(pdf_directory):
+    """Record each discovered PDF path, content checksum, size and discovery
+    status.
 
+    Args:
+        pdf_directory: Directory whose top-level non-hidden PDF files are
+            inspected.
+
+    Returns:
+        Versioned mapping of relative paths to checksum, size and status
+        records.
+
+    Raises:
+        OSError: A discovered PDF cannot be read or inspected.
+    """
     manifest = {}
 
     for filename in get_pdf_files(pdf_directory):
@@ -50,7 +79,15 @@ def get_document_manifest(pdf_directory):
 
 
 def compare_document_manifests(previous, current):
+    """Classify document additions, content changes, removals and unchanged paths.
 
+    Args:
+        previous: Prior document manifest or None for a new collection.
+        current: Current discovered document manifest.
+
+    Returns:
+        Mapping with added, changed, unchanged and removed path lists.
+    """
     previous_documents = (
         previous.get("documents", {}) if isinstance(previous, dict) else {}
     )
@@ -81,7 +118,17 @@ def compare_document_manifests(previous, current):
 
 
 def build_index_metrics(chunks, document_manifest, indexed_at=None):
+    """Count indexed documents and chunks and attach an indexing timestamp.
 
+    Args:
+        chunks: Final text-document chunks used to compute persisted metrics.
+        document_manifest: Versioned source-file identity and status records.
+        indexed_at: Optional timestamp override; defaults to the current UTC ISO
+            timestamp.
+
+    Returns:
+        Versioned counts, per-document chunk counts and UTC indexing timestamp.
+    """
     per_document_chunk_counts: dict[str, int] = {}
     for document in chunks:
         metadata = getattr(document, "metadata", {}) or {}
@@ -107,7 +154,17 @@ def build_index_metrics(chunks, document_manifest, indexed_at=None):
 
 
 def is_valid_index_metrics(metrics):
+    """Check the required schema version and field types of persisted index
+    metrics.
 
+    Args:
+        metrics: Persisted metric value to validate against the supported
+            schema.
+
+    Returns:
+        True when the documented compatibility/existence check passes; otherwise
+        False.
+    """
     return (
         isinstance(metrics, dict)
         and metrics.get("schema_version") == METRICS_SCHEMA_VERSION
@@ -119,11 +176,29 @@ def is_valid_index_metrics(metrics):
 
 
 def get_pdf_state(pdf_directory):
+    """Compute the content identity of the currently discovered PDF collection.
+
+    Args:
+        pdf_directory: Directory whose top-level non-hidden PDF files are
+            inspected.
+
+    Returns:
+        Hexadecimal SHA-256 identity of the stable document fields.
+    """
     return document_state(get_document_manifest(pdf_directory))
 
 
 def document_state(manifest):
-    """Hash document content/identity, never mutable processing status."""
+    """Hash stable document identity fields while excluding mutable processing
+    status.
+
+    Args:
+        manifest: Versioned document or artifact manifest for the current
+            operation.
+
+    Returns:
+        Hexadecimal SHA-256 identity independent of processing status.
+    """
     documents = manifest.get("documents", {})
     identity = {
         name: {key: record.get(key) for key in ("path", "sha256", "size")}
@@ -133,7 +208,18 @@ def document_state(manifest):
 
 
 def _sha256_file(path):
+    """Hash a file in bounded blocks without loading the whole artifact into
+    memory.
 
+    Args:
+        path: Filesystem path to read or write.
+
+    Returns:
+        Hexadecimal SHA-256 digest of the artifact bytes.
+
+    Raises:
+        OSError: The input artifact cannot be opened or read.
+    """
     digest = hashlib.sha256()
 
     with open(path, "rb") as file_handle:
@@ -149,7 +235,25 @@ def build_index_manifest(
     embedding_model,
     vector_dimension,
 ):
+    """Record provider identity, vector dimension and checksums of both index
+    artifacts.
 
+    Args:
+        index_directory: Trusted generated index directory; must be below a
+            replaceable mount root.
+        embedding_provider: Expected embedding provider identity, such as
+            ollama.
+        embedding_model: Expected embedding model name; equality does not detect
+            mutable-tag weight changes.
+        vector_dimension: Embedding dimension recorded alongside the artifacts.
+
+    Returns:
+        JSON-compatible schema, provider, dimension, time and artifact records.
+
+    Raises:
+        FileNotFoundError: A required FAISS artifact is absent.
+        OSError: An artifact cannot be inspected or hashed.
+    """
     index_path = Path(index_directory)
     artifacts = {}
 
@@ -173,10 +277,29 @@ def build_index_manifest(
 
 
 def _snapshot_path(index_directory):
+    """Resolve the fixed snapshot filename below the configured index directory.
+
+    Args:
+        index_directory: Trusted generated index directory; must be below a
+            replaceable mount root.
+
+    Returns:
+        Path to index_snapshot.json within the supplied index directory.
+    """
     return Path(index_directory) / SNAPSHOT_FILE
 
 
 def load_index_snapshot(index_directory):
+    """Read snapshot JSON, returning no snapshot for missing, unreadable or
+    malformed data.
+
+    Args:
+        index_directory: Trusted generated index directory; must be below a
+            replaceable mount root.
+
+    Returns:
+        Decoded snapshot, or None when missing, unreadable or invalid JSON.
+    """
     try:
         with open(_snapshot_path(index_directory), encoding="utf-8") as file_handle:
             return json.load(file_handle)
@@ -185,6 +308,19 @@ def load_index_snapshot(index_directory):
 
 
 def _write_json(path, payload):
+    """Write an indented UTF-8 JSON document with a terminating newline.
+
+    Args:
+        path: Filesystem path to read or write.
+        payload: JSON-serializable data to write or POST.
+
+    Returns:
+        None.
+
+    Raises:
+        OSError: The destination cannot be written.
+        TypeError: The payload is not JSON serializable.
+    """
     with open(path, "w", encoding="utf-8") as file_handle:
         json.dump(payload, file_handle, indent=2)
         file_handle.write("\n")
@@ -200,6 +336,27 @@ def build_index_snapshot(
     indexed_at=None,
     indexing_config=None,
 ):
+    """Combine artifact integrity, document identity, metrics and indexing
+    configuration.
+
+    Args:
+        index_directory: Trusted generated index directory; must be below a
+            replaceable mount root.
+        embedding_provider: Expected embedding provider identity, such as
+            ollama.
+        embedding_model: Expected embedding model name; equality does not detect
+            mutable-tag weight changes.
+        vector_dimension: Embedding dimension recorded alongside the artifacts.
+        document_manifest: Versioned source-file identity and status records.
+        chunks: Final text-document chunks used to compute persisted metrics.
+        indexed_at: Optional timestamp override; defaults to the current UTC ISO
+            timestamp.
+        indexing_config: Optional splitter revision and chunk settings stored
+            with the snapshot.
+
+    Returns:
+        Complete JSON-compatible generation record including metrics.
+    """
     metrics = build_index_metrics(chunks, document_manifest, indexed_at)
     snapshot = build_index_manifest(
         index_directory, embedding_provider, embedding_model, vector_dimension
@@ -217,6 +374,21 @@ def build_index_snapshot(
 
 
 def verify_index_snapshot(index_directory, embedding_provider, embedding_model):
+    """Validate snapshot shape and both artifact checksums for the expected
+    embedding model.
+
+    Args:
+        index_directory: Trusted generated index directory; must be below a
+            replaceable mount root.
+        embedding_provider: Expected embedding provider identity, such as
+            ollama.
+        embedding_model: Expected embedding model name; equality does not detect
+            mutable-tag weight changes.
+
+    Returns:
+        True when the documented compatibility/existence check passes; otherwise
+        False.
+    """
     snapshot = load_index_snapshot(index_directory)
     if not isinstance(snapshot, dict) or snapshot.get("snapshot_schema_version") != 1:
         return False
@@ -234,6 +406,23 @@ def verify_index_snapshot(index_directory, embedding_provider, embedding_model):
 
 
 def _verify_manifest(index_directory, embedding_provider, embedding_model, manifest):
+    """Compare persisted schema, provider identity, artifact sizes and content
+    hashes.
+
+    Args:
+        index_directory: Trusted generated index directory; must be below a
+            replaceable mount root.
+        embedding_provider: Expected embedding provider identity, such as
+            ollama.
+        embedding_model: Expected embedding model name; equality does not detect
+            mutable-tag weight changes.
+        manifest: Versioned document or artifact manifest for the current
+            operation.
+
+    Returns:
+        True when the documented compatibility/existence check passes; otherwise
+        False.
+    """
     if manifest.get("schema_version") != INDEX_SCHEMA_VERSION:
         return False
     if manifest.get("embedding_provider") != embedding_provider:
@@ -257,7 +446,18 @@ def _verify_manifest(index_directory, embedding_provider, embedding_model, manif
 
 
 def save_index_manifest(manifest):
+    """Replace the legacy manifest JSON through a sibling temporary file.
 
+    Args:
+        manifest: Versioned document or artifact manifest for the current
+            operation.
+
+    Returns:
+        None.
+
+    Raises:
+        OSError: The legacy manifest cannot be written or replaced.
+    """
     manifest_path = Path(INDEX_MANIFEST_FILE)
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = manifest_path.with_suffix(".tmp")
@@ -270,7 +470,11 @@ def save_index_manifest(manifest):
 
 
 def load_index_manifest():
+    """Read legacy manifest JSON or return no manifest when it cannot be decoded.
 
+    Returns:
+        Decoded legacy manifest, or None on read/JSON errors.
+    """
     try:
         with open(INDEX_MANIFEST_FILE, encoding="utf-8") as file_handle:
             return json.load(file_handle)
@@ -283,7 +487,20 @@ def verify_index_manifest(
     embedding_provider,
     embedding_model,
 ):
+    """Verify the current snapshot, falling back to legacy manifest verification.
 
+    Args:
+        index_directory: Trusted generated index directory; must be below a
+            replaceable mount root.
+        embedding_provider: Expected embedding provider identity, such as
+            ollama.
+        embedding_model: Expected embedding model name; equality does not detect
+            mutable-tag weight changes.
+
+    Returns:
+        True when the documented compatibility/existence check passes; otherwise
+        False.
+    """
     snapshot = load_index_snapshot(index_directory)
     if isinstance(snapshot, dict):
         return verify_index_snapshot(
@@ -308,7 +525,35 @@ def save_index_snapshot_atomically(
     chunks,
     indexing_config=None,
 ):
-    """Replace the complete persisted generation only after it verifies."""
+    """Stage and verify a complete generation before promoting it with rollback on
+    failure.
+
+    Args:
+        vectors: Vector-store instance exposing the FAISS-compatible
+            retrieval/persistence interface.
+        index_directory: Trusted generated index directory; must be below a
+            replaceable mount root.
+        embedding_provider: Expected embedding provider identity, such as
+            ollama.
+        embedding_model: Expected embedding model name; equality does not detect
+            mutable-tag weight changes.
+        document_manifest: Versioned source-file identity and status records.
+        chunks: Final text-document chunks used to compute persisted metrics.
+        indexing_config: Optional splitter revision and chunk settings stored
+            with the snapshot.
+
+    Returns:
+        Snapshot record associated with the successfully promoted generation.
+
+    Raises:
+        Exception: Staging, verification or promotion fails; rollback is
+            attempted before propagation.
+
+    Notes:
+        The target must be a child of a writable mount, not its mount point.
+        This process-local rollback scheme does not provide concurrent-writer
+        safety.
+    """
     index_path = Path(index_directory)
     index_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = Path(
@@ -351,7 +596,22 @@ def save_index_snapshot_atomically(
 
 
 def save_faiss_index_atomically(vectors, index_directory):
+    """Stage and replace legacy FAISS artifacts while restoring the previous
+    directory on error.
 
+    Args:
+        vectors: Vector-store instance exposing the FAISS-compatible
+            retrieval/persistence interface.
+        index_directory: Trusted generated index directory; must be below a
+            replaceable mount root.
+
+    Returns:
+        None.
+
+    Raises:
+        Exception: Staging or promotion fails; rollback is attempted before
+            propagation.
+    """
     index_path = Path(index_directory)
     index_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = Path(
@@ -383,7 +643,19 @@ def save_faiss_index_atomically(vectors, index_directory):
 
 
 def discard_persisted_index(index_directory):
+    """Remove generated index data and the legacy manifest without removing source
+    PDFs.
 
+    Args:
+        index_directory: Trusted generated index directory; must be below a
+            replaceable mount root.
+
+    Returns:
+        None.
+
+    Raises:
+        OSError: Generated artifacts cannot be removed.
+    """
     index_path = Path(index_directory)
     if index_path.exists():
         shutil.rmtree(index_path)
@@ -394,12 +666,26 @@ def discard_persisted_index(index_directory):
 
 
 def metadata_exists():
+    """Report whether the legacy metadata file exists.
 
+    Returns:
+        True when the documented compatibility/existence check passes; otherwise
+        False.
+    """
     return os.path.exists(METADATA_FILE)
 
 
 def load_metadata():
+    """Read legacy metadata when present; malformed JSON and read failures
+    propagate.
 
+    Returns:
+        Decoded legacy metadata, or None if the metadata file is absent.
+
+    Raises:
+        OSError: Existing legacy metadata cannot be read.
+        json.JSONDecodeError: Existing legacy metadata is malformed.
+    """
     if not metadata_exists():
         return None
 
@@ -408,7 +694,21 @@ def load_metadata():
 
 
 def save_metadata(state, document_manifest=None, metrics=None):
+    """Replace legacy PDF state and optional manifest/metrics through a temporary
+    file.
 
+    Args:
+        state: Stable PDF state hash stored in the legacy metadata record.
+        document_manifest: Versioned source-file identity and status records.
+        metrics: Persisted metric value to validate against the supported
+            schema.
+
+    Returns:
+        None.
+
+    Raises:
+        OSError: Legacy metadata cannot be written or replaced.
+    """
     metadata_path = Path(METADATA_FILE)
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = metadata_path.with_suffix(".tmp")

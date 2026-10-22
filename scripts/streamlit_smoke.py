@@ -1,15 +1,20 @@
-"""Start the Streamlit app against an empty, provider-free workspace."""
+"""Exercise provider-free Streamlit execution and health in a temporary workspace.
+
+File: scripts/streamlit_smoke.py
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+"""
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shutil
 import socket
 import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 from unittest.mock import patch
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -19,12 +24,34 @@ sys.path.insert(0, str(ROOT))
 
 
 def available_port() -> int:
+    """Ask the operating system for an available loopback TCP port.
+
+    Returns:
+        Ephemeral port number; the caller must still handle allocation races.
+
+    Raises:
+        OSError: Loopback socket creation or binding is not permitted.
+    """
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))
         return int(listener.getsockname()[1])
 
 
 def wait_for_health(url: str, process: subprocess.Popen[str]) -> None:
+    """Poll server health until ready, process exit or the bounded startup
+    deadline.
+
+    Args:
+        url: Provider or server-health URL to contact.
+        process: Running Streamlit subprocess monitored for premature exit.
+
+    Returns:
+        None.
+
+    Raises:
+        RuntimeError: The server process exits before becoming healthy.
+        TimeoutError: The health endpoint misses the startup deadline.
+    """
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         if process.poll() is not None:
@@ -40,6 +67,16 @@ def wait_for_health(url: str, process: subprocess.Popen[str]) -> None:
 
 
 def main() -> None:
+    """Run isolated application and HTTP-health checks and always terminate the
+    server.
+
+    Returns:
+        None.
+
+    Raises:
+        Exception: Configuration, I/O or smoke-check failures propagate with a
+            nonzero process status.
+    """
     port = available_port()
     with tempfile.TemporaryDirectory(prefix="rag-startup-") as temporary_directory:
         workspace = Path(temporary_directory)

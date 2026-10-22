@@ -1,3 +1,10 @@
+"""Regression tests for app services.
+
+File: tests/test_app_services.py
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+"""
+
 import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -6,7 +13,10 @@ from app_services import IndexConfig, IndexService
 
 
 class AppServiceTests(unittest.TestCase):
+    """Regression cases for app services."""
+
     def test_load_returns_verified_vectors_and_metrics(self):
+        """Verify load returns verified vectors and metrics."""
         vectors = Mock()
         vectors.index.d = 3
         metrics = {
@@ -42,6 +52,7 @@ class AppServiceTests(unittest.TestCase):
         self.assertEqual(loaded_metrics, metrics)
 
     def test_load_rejects_unverified_index(self):
+        """Verify load rejects unverified index."""
         service = IndexService(
             IndexConfig("docs", "index", "ollama", "model"),
             Mock(),
@@ -55,6 +66,7 @@ class AppServiceTests(unittest.TestCase):
                 service.load()
 
     def test_incremental_changes_without_verified_vectors_use_full_rebuild(self):
+        """Verify incremental changes without verified vectors use full rebuild."""
         document = SimpleNamespace(
             metadata={"source": "docs/paper.pdf"}, page_content="content"
         )

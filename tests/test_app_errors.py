@@ -1,5 +1,12 @@
-import unittest
+"""Regression tests for app errors.
+
+File: tests/test_app_errors.py
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+"""
+
 import tempfile
+import unittest
 from pathlib import Path
 
 from app_errors import ApplicationError, ErrorCategory, user_message
@@ -7,7 +14,10 @@ from app_logging import LOGGER, _redact, configure_logging
 
 
 class ApplicationErrorTests(unittest.TestCase):
+    """Regression cases for app errors."""
+
     def test_categories_have_safe_retry_message(self):
+        """Verify categories have safe retry message."""
         message = user_message(
             ApplicationError(
                 ErrorCategory.PROVIDER, "Provider unavailable", retryable=True
@@ -17,13 +27,16 @@ class ApplicationErrorTests(unittest.TestCase):
         self.assertIn("Try again", message)
 
     def test_unknown_errors_do_not_leak_infrastructure_details(self):
+        """Verify unknown errors do not leak infrastructure details."""
         self.assertNotIn("secret", user_message(RuntimeError("secret")))
 
     def test_log_redaction_hides_credentials(self):
+        """Verify log redaction hides credentials."""
         self.assertNotIn("secret", _redact("GROQ_API_KEY=secret"))
         self.assertNotIn("token-value", _redact("Authorization: Bearer token-value"))
 
     def test_expected_infrastructure_failures_are_safe_for_users(self):
+        """Verify expected infrastructure failures are safe for users."""
         failures = (
             TimeoutError("provider timeout at private-host:443"),
             PermissionError("authentication failed for GROQ_API_KEY=secret"),
@@ -36,6 +49,7 @@ class ApplicationErrorTests(unittest.TestCase):
                 self.assertIn("try again", message.lower())
 
     def test_log_directory_is_created(self):
+        """Verify log directory is created."""
         with tempfile.TemporaryDirectory() as directory:
             log_directory = Path(directory) / "logs"
             original_handlers = list(LOGGER.handlers)

@@ -1,3 +1,10 @@
+<!--
+File: research_papers/README.md
+Purpose: Sample document rights and provenance.
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+-->
+
 # Sample document rights and provenance
 
 `Attention.pdf` and `LLM.pdf` predate the bug-fix review. This repository does not
