@@ -1,3 +1,10 @@
+"""Regression tests for settings.
+
+File: tests/test_settings.py
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+"""
+
 import unittest
 from pathlib import Path
 
@@ -5,7 +12,10 @@ from settings import Settings, provider_guidance
 
 
 class SettingsTests(unittest.TestCase):
+    """Regression cases for settings."""
+
     def test_defaults_are_stable_and_credentials_are_redacted(self):
+        """Verify defaults are stable and credentials are redacted."""
         settings = Settings.from_env({})
         self.assertEqual(settings.llm_model, "openai/gpt-oss-20b")
         self.assertEqual(settings.embedding_model, "nomic-embed-text:latest")
@@ -15,6 +25,7 @@ class SettingsTests(unittest.TestCase):
         self.assertNotIn("groq_api_key", settings.redacted_summary())
 
     def test_environment_overrides_are_applied(self):
+        """Verify environment overrides are applied."""
         settings = Settings.from_env(
             {
                 "GROQ_API_KEY": "secret-value",
@@ -36,6 +47,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.validate(), [])
 
     def test_invalid_chunk_and_retrieval_settings_are_reported(self):
+        """Verify invalid chunk and retrieval settings are reported."""
         settings = Settings.from_env(
             {
                 "CHUNK_SIZE": "100",
@@ -51,6 +63,7 @@ class SettingsTests(unittest.TestCase):
         self.assertTrue(any("RELEVANCE_THRESHOLD" in error for error in errors))
 
     def test_malformed_numeric_values_are_safe_validation_errors(self):
+        """Verify malformed numeric values are safe validation errors."""
         settings = Settings.from_env(
             {"CHUNK_SIZE": "large", "RETRIEVAL_RELEVANCE_THRESHOLD": "high"}
         )
@@ -60,6 +73,7 @@ class SettingsTests(unittest.TestCase):
         )
 
     def test_provider_guidance_is_specific_and_does_not_echo_payload(self):
+        """Verify provider guidance is specific and does not echo payload."""
         self.assertIn(
             "authentication", provider_guidance(Exception("401 secret-token")).lower()
         )

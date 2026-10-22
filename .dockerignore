@@ -1,3 +1,8 @@
+# File: .dockerignore
+# Purpose: Exclude secrets and generated state from the production image build context.
+# Maintainer: sunshine-engineer
+# Modified: 2026-10-23
+
 __pycache__/
 *.pyc
 

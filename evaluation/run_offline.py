@@ -1,4 +1,9 @@
-"""Run deterministic offline retrieval evaluation without live providers."""
+"""Evaluate the versioned synthetic retrieval fixture and enforce metric thresholds.
+
+File: evaluation/run_offline.py
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+"""
 
 import argparse
 import json
@@ -12,17 +17,38 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from query_services import (  # noqa: E402
-    ConversationalQueryService,
-    REFUSAL_RESPONSE,
     CLARIFICATION_RESPONSE,
+    REFUSAL_RESPONSE,
+    ConversationalQueryService,
 )
 
 
 def load_dataset(path: Path):
+    """Read the synthetic fixture from a UTF-8 JSON file.
+
+    Args:
+        path: Filesystem path to read or write.
+
+    Returns:
+        Decoded fixture mapping containing version, documents and cases.
+
+    Raises:
+        OSError: The fixture cannot be read.
+        json.JSONDecodeError: The fixture is malformed.
+    """
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def make_document(record):
+    """Adapt a fixture document record into the minimal retrieval-document
+    interface.
+
+    Args:
+        record: Synthetic source record with text and citation fields.
+
+    Returns:
+        SimpleNamespace exposing page_content and source/page/chunk metadata.
+    """
     return SimpleNamespace(
         metadata={
             "source": record["source"],
@@ -34,12 +60,35 @@ def make_document(record):
 
 
 def evaluate(dataset):
+    """Run deterministic fake retrieval/generation and aggregate explicitly defined
+    metrics.
+
+    Args:
+        dataset: Decoded synthetic evaluation fixture; this is not a live-
+            provider corpus.
+
+    Returns:
+        Aggregate metrics and per-case outcomes with latency measurements.
+
+    Raises:
+        KeyError: A required fixture field is missing.
+        ValueError: Expected source and page arrays do not have matching
+            lengths.
+    """
     documents = [make_document(record) for record in dataset["documents"]]
     outcomes = []
 
     for case in dataset["cases"]:
 
         def retrieve(query):
+            """Retrieve scored evidence candidates for the current lookup text.
+
+            Args:
+                query: Lookup text passed to the retriever.
+
+            Returns:
+                Ordered document/relevance-score pairs matching the lookup text.
+            """
             query_words = set(query.lower().split())
             matches = []
             for document in documents:
@@ -50,6 +99,18 @@ def evaluate(dataset):
             return sorted(matches, key=lambda result: result[1], reverse=True)
 
         def rewriter(history, question):
+            """Apply the fixture-only contextual query expansion used by offline
+            regression cases.
+
+            Args:
+                history: Recent conversation text; generation/rewrite
+                    composition applies configured caps.
+                question: Original user question; generation preserves its
+                    wording.
+
+            Returns:
+                Fixture-specific replacement query or the unchanged question.
+            """
             if history and "condition" in question.lower():
                 return "large language models context output"
             return question
@@ -117,6 +178,15 @@ def evaluate(dataset):
     clarifications = [o for o in outcomes if o["clarification_correct"] is not None]
 
     def mean(items, field):
+        """Average a named outcome field, returning zero for an empty cohort.
+
+        Args:
+            items: Outcome records included in the metric cohort.
+            field: Numeric or boolean outcome field to average.
+
+        Returns:
+            Arithmetic mean of the requested field, or 0.0 for an empty list.
+        """
         return sum(item[field] for item in items) / len(items) if items else 0.0
 
     return {
@@ -135,6 +205,17 @@ def evaluate(dataset):
 
 
 def main():
+    """Parse evaluation options, persist results and exit nonzero when a metric
+    misses its threshold.
+
+    Returns:
+        None.
+
+    Raises:
+        SystemExit: A metric falls below its requested minimum, or CLI options
+            are invalid.
+        Exception: Fixture loading or result persistence fails.
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--dataset", type=Path, default=Path("evaluation/dataset.v2.json")

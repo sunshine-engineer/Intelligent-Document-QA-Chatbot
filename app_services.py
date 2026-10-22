@@ -1,28 +1,44 @@
-"""Application services used by the Streamlit adapter.
+"""Build and load verified FAISS indexes through injectable infrastructure adapters.
 
-The services keep filesystem, vector-store, and retrieval orchestration out of
-the UI module.  Dependencies are injectable so lifecycle behavior can be
-tested without starting Streamlit or Ollama.
+File: app_services.py
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
 """
 
+import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Callable
 
+from app_logging import log_event, new_correlation_id
 from index_metadata import (
+    document_state,
     get_document_manifest,
+    is_valid_index_metrics,
     load_index_snapshot,
     save_index_snapshot_atomically,
     verify_index_manifest,
-    is_valid_index_metrics,
-    document_state,
 )
-import logging
-import time
-from app_logging import log_event, new_correlation_id
 
 
 @dataclass(frozen=True)
 class IndexConfig:
+    """Immutable index inputs and splitter settings defining persisted-generation
+    compatibility.
+
+    Attributes:
+        pdf_directory: Directory whose top-level non-hidden PDF files are
+            inspected.
+        index_directory: Trusted generated index directory; must be below a
+            replaceable mount root.
+        embedding_provider: Expected embedding provider identity, such as
+            ollama.
+        embedding_model: Expected embedding model name; equality does not detect
+            mutable-tag weight changes.
+        chunk_size: Maximum characters requested per splitter chunk.
+        chunk_overlap: Character overlap between adjacent splitter chunks.
+    """
+
     pdf_directory: str
     index_directory: str
     embedding_provider: str
@@ -31,6 +47,12 @@ class IndexConfig:
     chunk_overlap: int = 200
 
     def indexing_config(self):
+        """Return the splitter identity and chunk settings required for snapshot
+        compatibility.
+
+        Returns:
+            JSON-compatible splitter revision and chunk-size/overlap settings.
+        """
         return {
             "splitter": "RecursiveCharacterTextSplitter:v1",
             "chunk_size": self.chunk_size,
@@ -39,7 +61,9 @@ class IndexConfig:
 
 
 class IndexService:
-    """Build and load a verified FAISS index without UI/session dependencies."""
+    """Injectable index build/load orchestration; source PDFs and trusted generated
+    state stay separate.
+    """
 
     def __init__(
         self,
@@ -50,6 +74,23 @@ class IndexService:
         faiss_loader: Callable[..., Any],
         faiss_factory: Callable[[list[Any], Any], Any] | None = None,
     ):
+        """Initialize injected adapters and state without performing provider
+        requests.
+
+        Args:
+            config: Index paths, embedding identity and splitter compatibility
+                settings.
+            embedding_factory: Zero-argument callback returning an embedding
+                client.
+            loader_factory: Callback accepting a PDF directory and returning a
+                document loader.
+            splitter_factory: Zero-argument callback returning a document
+                splitter.
+            faiss_loader: Callback loading a persisted vector store after
+                verification.
+            faiss_factory: Optional callback embedding chunks into a new vector
+                store.
+        """
         self.config = config
         self.embedding_factory = embedding_factory
         self.loader_factory = loader_factory
@@ -58,6 +99,17 @@ class IndexService:
         self.faiss_factory = faiss_factory
 
     def load(self) -> tuple[Any, dict]:
+        """Verify snapshot compatibility and integrity before loading its FAISS
+        document store.
+
+        Returns:
+            Tuple of verified vectors and their persisted metrics.
+
+        Raises:
+            ValueError: Integrity, dimension, metrics or indexing configuration
+                is incompatible.
+            Exception: Embedding construction or deserialization fails.
+        """
         correlation_id = new_correlation_id()
         log_event(
             logging.INFO,
@@ -115,6 +167,24 @@ class IndexService:
     def build(
         self, document_changes=None, existing_vectors=None
     ) -> tuple[Any, dict, list, list]:
+        """Fully parse, split, embed and persist a stable generation of the PDF
+        collection.
+
+        Args:
+            document_changes: Optional legacy change classification used for
+                diagnostics; builds remain full.
+            existing_vectors: Legacy compatibility argument; never mutated or
+                reused for incremental indexing.
+
+        Returns:
+            Tuple of vectors, metrics, loaded pages and final text chunks.
+
+        Raises:
+            ValueError: No text is extracted or PDFs change while the generation
+                is being built.
+            Exception: Parsing, embedding or persistence fails; a successful
+                snapshot is not returned.
+        """
         correlation_id = new_correlation_id()
         started_at = time.perf_counter()
         initial_manifest = get_document_manifest(self.config.pdf_directory)

@@ -1,4 +1,9 @@
-"""Exercise the real LangChain composition with local deterministic providers."""
+"""Regression tests for app composition.
+
+File: tests/test_app_composition.py
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+"""
 
 import unittest
 from types import SimpleNamespace
@@ -11,15 +16,44 @@ from settings import Settings
 
 
 class CompositionTests(unittest.TestCase):
+    """Regression cases for app composition."""
+
     def test_real_factory_expands_follow_up_and_supplies_citation_ids(self):
+        """Verify real factory expands follow up and supplies citation ids."""
         queries = []
         prompts = []
 
         class Vectors:
+            """Local retrieval adapter capturing lookup text for real query-
+            composition tests.
+            """
+
             def as_retriever(self, **kwargs):
+                """Return the test adapter exposing this vector store without
+                external services.
+
+                Args:
+                    **kwargs: Retriever options accepted by the fake adapter
+                        without contacting providers.
+
+                Returns:
+                    Adapter with vectorstore referring to this fake store.
+                """
                 return SimpleNamespace(vectorstore=self)
 
             def similarity_search_with_relevance_scores(self, query, k):
+                """Capture the lookup text and return deterministic scored test
+                evidence.
+
+                Args:
+                    query: Lookup text passed to the retriever.
+                    k: Maximum number of candidates requested by the
+                        composition.
+
+                Returns:
+                    Fixed evidence/score pairs used by the composition
+                    regression.
+                """
                 queries.append(query)
                 return [
                     (
@@ -32,6 +66,17 @@ class CompositionTests(unittest.TestCase):
                 ]
 
         def answer(prompt):
+            """Capture the composed prompt and return a deterministic answer with a
+            source ID.
+
+            Args:
+                prompt: Composed LangChain prompt to inspect in the
+                    deterministic test runnable.
+
+            Returns:
+                Deterministic supported answer text containing the S1 source
+                reference.
+            """
             prompts.append(prompt.to_string())
             return "Attention weighs tokens [S1]."
 
@@ -50,16 +95,41 @@ class CompositionTests(unittest.TestCase):
         self.assertEqual(len(queries), 1)
 
     def test_real_faiss_round_trip_with_deterministic_embeddings(self):
+        """Verify real faiss round trip with deterministic embeddings."""
         import tempfile
-        from langchain_core.embeddings import Embeddings
+
         from langchain_community.vectorstores import FAISS
+        from langchain_core.embeddings import Embeddings
+
         from app_services import IndexConfig, IndexService
 
         class LocalEmbeddings(Embeddings):
+            """Provider-free deterministic embeddings for a real FAISS
+            persistence/search check.
+            """
+
             def embed_documents(self, texts):
+                """Embed each input text with the deterministic local test mapping.
+
+                Args:
+                    texts: Input strings to embed using the test vector mapping.
+
+                Returns:
+                    One deterministic numeric vector per input string.
+                """
                 return [self.embed_query(text) for text in texts]
 
             def embed_query(self, text):
+                """Map attention text and other text to orthogonal deterministic
+                test vectors.
+
+                Args:
+                    text: Input string mapped to a deterministic test vector.
+
+                Returns:
+                    Two-element numeric vector separating attention text from
+                    other text.
+                """
                 return [1.0, 0.0] if "attention" in text.lower() else [0.0, 1.0]
 
         embeddings = LocalEmbeddings()
@@ -98,8 +168,11 @@ class CompositionTests(unittest.TestCase):
 
 
 class ProviderConfigurationTests(unittest.TestCase):
+    """Regression cases for app composition."""
+
     def test_provider_objects_construct_with_explicit_limits_without_requests(self):
-        from app_composition import create_llm, create_embedding_factory
+        """Verify provider objects construct with explicit limits without requests."""
+        from app_composition import create_embedding_factory, create_llm
 
         settings = Settings.from_env({"GROQ_API_KEY": "synthetic-not-a-real-key"})
         llm = create_llm(settings)
@@ -110,5 +183,6 @@ class ProviderConfigurationTests(unittest.TestCase):
         self.assertEqual(embeddings.client_kwargs, {"timeout": 60})
 
     def test_missing_generation_provider_is_rejected_explicitly(self):
+        """Verify missing generation provider is rejected explicitly."""
         with self.assertRaisesRegex(ValueError, "not configured"):
             build_query_service(None, None, Settings.from_env({}), 4)

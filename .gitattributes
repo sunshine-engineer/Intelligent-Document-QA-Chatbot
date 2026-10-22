@@ -1,0 +1,8 @@
+# File: .gitattributes
+# Purpose: Preserve binary assets and normalize project text to LF in Git.
+# Maintainer: sunshine-engineer
+# Modified: 2026-10-23
+
+* text=auto eol=lf
+*.png binary
+*.pdf binary

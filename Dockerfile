@@ -1,3 +1,8 @@
+# File: Dockerfile
+# Purpose: Build the reproducible Python 3.12 production Streamlit image.
+# Maintainer: sunshine-engineer
+# Modified: 2026-10-23
+
 FROM python:3.12.8-slim
 
 WORKDIR /app

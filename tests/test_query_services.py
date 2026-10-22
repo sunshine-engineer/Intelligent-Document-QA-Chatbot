@@ -1,10 +1,29 @@
+"""Regression tests for query services.
+
+File: tests/test_query_services.py
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+"""
+
 import unittest
 from types import SimpleNamespace
 
-from query_services import ConversationalQueryService, REFUSAL_RESPONSE
+from query_services import REFUSAL_RESPONSE, ConversationalQueryService
 
 
 def document(source, page, chunk_id, text):
+    """Create a minimal document with evidence text and citation metadata for query
+    tests.
+
+    Args:
+        source: Source filename or path recorded in citation metadata.
+        page: Zero-based source page used by the document loader.
+        chunk_id: Stable identifier for a retrieved evidence chunk.
+        text: Input string mapped to a deterministic test vector.
+
+    Returns:
+        SimpleNamespace with page_content and citation metadata.
+    """
     return SimpleNamespace(
         metadata={"source": source, "page": page, "chunk_id": chunk_id},
         page_content=text,
@@ -12,7 +31,10 @@ def document(source, page, chunk_id, text):
 
 
 class ConversationalQueryTests(unittest.TestCase):
+    """Regression cases for query services."""
+
     def test_follow_up_is_rewritten_and_citations_are_ordered_and_unique(self):
+        """Verify follow up is rewritten and citations are ordered and unique."""
         first = document("paper.pdf", 0, "a", "first evidence")
         duplicate = document("paper.pdf", 0, "a", "first evidence")
         second = document("paper.pdf", 2, "b", "second evidence")
@@ -36,6 +58,7 @@ class ConversationalQueryTests(unittest.TestCase):
         self.assertEqual(result.citations[0].page, 1)
 
     def test_standalone_question_does_not_rewrite(self):
+        """Verify standalone question does not rewrite."""
         service = ConversationalQueryService(
             retriever=lambda query: [(document("paper.pdf", 1, "a", "evidence"), 0.9)],
             rewriter=lambda *_: self.fail("rewriter should not be called"),
@@ -46,6 +69,7 @@ class ConversationalQueryTests(unittest.TestCase):
         )
 
     def test_topic_change_with_history_does_not_rewrite(self):
+        """Verify topic change with history does not rewrite."""
         service = ConversationalQueryService(
             retriever=lambda query: [(document("paper.pdf", 1, "a", query), 0.9)],
             rewriter=lambda *_: self.fail("rewriter should not be called"),
@@ -56,6 +80,7 @@ class ConversationalQueryTests(unittest.TestCase):
         self.assertEqual(result.retrieval_query, "What is attention?")
 
     def test_ambiguous_follow_up_clarifies_in_sync_and_streaming_modes(self):
+        """Verify ambiguous follow up clarifies in sync and streaming modes."""
         service = ConversationalQueryService(
             retriever=lambda _: self.fail("retriever should not be called"),
             rewriter=lambda *_: self.fail("rewriter should not be called"),
@@ -70,6 +95,7 @@ class ConversationalQueryTests(unittest.TestCase):
         self.assertIn("clarify", "".join(stream.stream).lower())
 
     def test_empty_or_low_score_evidence_returns_refusal(self):
+        """Verify empty or low score evidence returns refusal."""
         service = ConversationalQueryService(
             retriever=lambda _: [(document("paper.pdf", 0, "a", "weak"), 0.2)],
             answerer=lambda *_: self.fail("answerer should not be called"),
@@ -80,9 +106,20 @@ class ConversationalQueryTests(unittest.TestCase):
         self.assertEqual(result.citations, ())
 
     def test_streaming_yields_provider_chunks_before_completion(self):
+        """Verify streaming yields provider chunks before completion."""
         events = []
 
         def stream_answer(*_):
+            """Yield controlled fragments while recording lazy streaming execution
+            order.
+
+            Args:
+                *_: Unused callback arguments accepted to match the service
+                    interface.
+
+            Yields:
+                Nonempty response text fragments in provider order.
+            """
             events.append("started")
             yield "first "
             events.append("continued")
@@ -101,7 +138,23 @@ class ConversationalQueryTests(unittest.TestCase):
         self.assertIsNotNone(result.timings.first_token_latency_ms)
 
     def test_mid_stream_failure_is_propagated(self):
+        """Verify mid stream failure is propagated."""
+
         def failing_stream(*_):
+            """Yield a partial response and then raise a simulated provider
+            timeout.
+
+            Args:
+                *_: Unused callback arguments accepted to match the service
+                    interface.
+
+            Yields:
+                Nonempty response text fragments in provider order.
+
+            Raises:
+                TimeoutError: The fixture reaches the simulated mid-stream
+                    failure.
+            """
             yield "partial"
             raise TimeoutError("provider timeout")
 

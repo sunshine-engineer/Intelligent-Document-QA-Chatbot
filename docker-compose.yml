@@ -1,3 +1,8 @@
+# File: docker-compose.yml
+# Purpose: Run the local Streamlit, Ollama initialization and optional database services.
+# Maintainer: sunshine-engineer
+# Modified: 2026-10-23
+
 services:
   ollama:
     image: ollama/ollama:0.11.11

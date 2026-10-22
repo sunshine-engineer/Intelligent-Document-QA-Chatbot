@@ -1,4 +1,20 @@
+<!--
+File: docs/fastapi-backend-v1-github-backlog.md
+Purpose: FastAPI Backend v1 GitHub Backlog.
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+-->
+
 # FastAPI Backend v1 GitHub Backlog
+
+## Status
+
+Future proposal, not the implemented application. Reviewed against runtime baseline
+`8824d96` on 22 October 2026: no FastAPI service, API authentication, worker,
+PostgreSQL application integration, migrations or SSE API exists in this checkout.
+The ordered items and closure rules below describe proposed work, not current
+capabilities or a verified live issue/milestone inventory. See
+[current handover](handover.md) for the supported prototype boundary.
 
 ## Goal
 

@@ -1,8 +1,16 @@
+# File: pyproject.toml
+# Purpose: Declare dependencies, supported Python and shared quality-tool configuration.
+# Maintainer: sunshine-engineer
+# Modified: 2026-10-23
+
 [project]
 name = "intelligent-document-qa-chatbot"
 version = "0.1.0"
 description = "A local document question-answering assistant using FAISS and Ollama embeddings."
 requires-python = ">=3.12,<3.13"
+readme = "README.md"
+license = "MIT"
+maintainers = [{name = "sunshine-engineer"}]
 dependencies = [
     "faiss-cpu>=1.8,<2",
     "langchain-classic>=1.0,<2",
@@ -11,6 +19,7 @@ dependencies = [
     "langchain-ollama>=1.0,<2",
     "langchain-text-splitters>=1.0,<2",
     "pypdf>=5,<7",
+    "pydantic>=2,<3",
     "python-dotenv>=1,<2",
     "streamlit>=1.40,<2",
 ]
@@ -35,7 +44,7 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F"]
+select = ["E", "F", "I", "D100", "D101", "D102", "D103", "D105", "D107"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

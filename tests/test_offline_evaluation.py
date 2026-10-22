@@ -1,3 +1,10 @@
+"""Regression tests for offline evaluation.
+
+File: tests/test_offline_evaluation.py
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+"""
+
 import unittest
 from pathlib import Path
 
@@ -5,7 +12,10 @@ from evaluation.run_offline import evaluate, load_dataset
 
 
 class OfflineEvaluationTests(unittest.TestCase):
+    """Regression cases for offline evaluation."""
+
     def test_reference_dataset_has_perfect_deterministic_baseline(self):
+        """Verify reference dataset has perfect deterministic baseline."""
         result = evaluate(load_dataset(Path("evaluation/dataset.v2.json")))
 
         self.assertEqual(result["case_count"], 5)

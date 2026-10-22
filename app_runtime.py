@@ -1,4 +1,9 @@
-"""Index lifecycle orchestration shared by the UI and regression checks."""
+"""Synchronize a session with the compatible persisted knowledge-base generation.
+
+File: app_runtime.py
+Maintainer: sunshine-engineer
+Modified: 2026-10-23
+"""
 
 from dataclasses import dataclass
 from typing import Any
@@ -14,16 +19,46 @@ from index_metadata import (
 
 @dataclass
 class KnowledgeBase:
+    """Session vectors, persisted metrics and the active generation identity; empty
+    when no PDFs exist.
+
+    Attributes:
+        vectors: Vector-store instance exposing the FAISS-compatible
+            retrieval/persistence interface.
+        metrics: Persisted metric value to validate against the supported
+            schema.
+        generation: Persisted creation timestamp used to match a loaded
+            generation.
+    """
+
     vectors: Any = None
     metrics: dict | None = None
     generation: str | None = None
 
 
 def synchronize_index(service: IndexService, previous=None, *, force=False):
-    """Reuse unchanged session vectors; load or build only when needed.
+    """Reuse a compatible session generation, load verified state, or rebuild the
+    corpus.
 
-    Discovery and configuration errors propagate to the UI's safe error boundary.
-    No failed operation replaces the caller's previous state.
+    Args:
+        service: IndexService configured for this corpus and persisted index
+            location.
+        previous: Optional session KnowledgeBase eligible for reuse.
+        force: Whether to bypass compatible state and rebuild the collection.
+
+    Returns:
+        KnowledgeBase containing vectors, metrics and generation, or empty
+        state.
+
+    Raises:
+        OSError: Discovery or persistence access fails.
+        Exception: Loader, provider or index-build failures propagate to the UI
+            boundary.
+
+    Notes:
+        No failed build replaces the caller's session state. Empty input
+        discards generated artifacts. Directory promotion is not a multi-writer
+        protocol.
     """
     manifest = get_document_manifest(service.config.pdf_directory)
     if not manifest["documents"]:
